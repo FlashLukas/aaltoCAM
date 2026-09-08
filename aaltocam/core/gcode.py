@@ -4,8 +4,9 @@ Postprocessors are small classes with one hook per machine event. Adding a
 dialect means subclassing and overriding two or three methods -- no changes
 anywhere else in the program.
 
-All output is metric, absolute, linear-only (G0/G1). Arcs are already
-flattened in the geometry layer, so no dialect has to support G2/G3.
+All output is metric and absolute. Dialects that declare `supports_arcs` are
+given G02/G03 for runs that fit a circle; the rest get line segments only, so
+adding a dialect never means implementing arcs.
 
 Note on height compensation: nothing here modulates Z along a cut. If your
 controller applies its own surface compensation (Wegstr, bCNC autolevel,
@@ -20,6 +21,8 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field, replace
+
+from . import arcfit
 
 
 @dataclass
@@ -54,6 +57,13 @@ class Postprocessor:
     rapid_rate: float | None = None
     #: Usable travel (x, y, z) in mm from machine zero, or None when unknown.
     envelope: tuple[float, float, float] | None = None
+    #: False when the controller ignores S and the spindle is set by hand.
+    commands_spindle = True
+    #: Whether the controller takes G02/G03 with I/J in the XY plane.
+    supports_arcs = False
+    #: Radius bounds for an emitted arc, mm.
+    min_arc_radius = 0.05
+    max_arc_radius = 1000.0
 
     def __init__(self, p: JobParams):
         self.p = p
@@ -62,6 +72,7 @@ class Postprocessor:
         self._low = [math.inf] * 3
         self._high = [-math.inf] * 3
         self._feeds_warned: set[float] = set()
+        self._pos = (0.0, 0.0)
 
     # -- helpers -----------------------------------------------------------
 
@@ -140,6 +151,7 @@ class Postprocessor:
 
     def rapid(self, x, y):
         self.track(x=x, y=y)
+        self._pos = (x, y)
         self.emit(f"G0 X{self.n(x)} Y{self.n(y)}")
 
     def rapid_z(self, z):
@@ -152,15 +164,46 @@ class Postprocessor:
 
     def cut(self, x, y):
         self.track(x=x, y=y)
+        self._pos = (x, y)
         self.emit(f"G1 X{self.n(x)} Y{self.n(y)}")
+
+    def arc(self, x, y, cx, cy, clockwise):
+        """Circular move to (x, y) about absolute centre (cx, cy).
+
+        I and J are incremental from the current point, which is the convention
+        every controller here uses and the reason the centre is passed absolute:
+        the postprocessor knows where it is, the caller should not have to.
+        """
+        i, j = cx - self._pos[0], cy - self._pos[1]
+        self.track(x=x, y=y)
+        self._pos = (x, y)
+        self.emit(f"{'G2' if clockwise else 'G3'} X{self.n(x)} Y{self.n(y)} "
+                  f"I{self.n(i)} J{self.n(j)}")
 
     def feed_move(self):
         self.emit(f"F{self.n(self.feed(self.p.feed_xy))}")
 
-    def tool_change(self, number: int, diameter: float):
+    def tool_note(self, tool):
+        """One comment describing the cutter about to be used.
+
+        The spindle line is the only place the operator sees the recorded rpm on
+        a machine that cannot be told it over G-code.
+        """
+        if tool is None:
+            return
+        bits = [tool.name or tool.id, f"dia {self.n(tool.diameter)} mm"]
+        if tool.spindle_rpm:
+            bits.append(f"spindle {tool.spindle_rpm} rpm"
+                        + ("" if self.commands_spindle else " - set by hand"))
+        if tool.notes:
+            bits.append(tool.notes)
+        self.emit(self.comment(", ".join(bits)))
+
+    def tool_change(self, number: int, diameter: float, tool=None):
         self.rapid_z(self.p.toolchange_z)
         self.emit("M5")
         self.emit(self.comment(f"change to tool {number}, dia {self.n(diameter)} mm"))
+        self.tool_note(tool)
         self.emit("M0")
 
     def footer(self):
@@ -174,27 +217,31 @@ class Postprocessor:
 class GrblPost(Postprocessor):
     name = "grbl"
     description = "GRBL / grblHAL. Uses M6 for tool changes."
+    supports_arcs = True
 
     def header(self, meta):
         super().header(meta)
         self.emit("G17")
 
-    def tool_change(self, number, diameter):
+    def tool_change(self, number, diameter, tool=None):
         self.emit(f"G0 Z{self.n(self.p.toolchange_z)}")
         self.emit("M5")
         self.emit(f"T{number} M6")
         self.emit(f"(dia {self.n(diameter)} mm)")
+        self.tool_note(tool)
 
 
 class LinuxCncPost(Postprocessor):
     name = "linuxcnc"
     description = "LinuxCNC. Emits G43 tool length offsets."
+    supports_arcs = True
 
-    def tool_change(self, number, diameter):
+    def tool_change(self, number, diameter, tool=None):
         self.emit(f"G0 Z{self.n(self.p.toolchange_z)}")
         self.emit("M5")
         self.emit(f"T{number} M6")
         self.emit(f"G43 H{number}")
+        self.tool_note(tool)
 
 
 class WegstrPost(Postprocessor):
@@ -222,6 +269,12 @@ class WegstrPost(Postprocessor):
     max_feed = 170.0
     rapid_rate = 170.0
     envelope = (140.0, 200.0, 40.0)
+    commands_spindle = False
+    supports_arcs = True
+    #: From the vendor machine definition: arcs below 0.055 mm radius or above
+    #: 200 mm are not executed.
+    min_arc_radius = 0.055
+    max_arc_radius = 200.0
     #: Smallest motion the controller can make, 10 mm / 2500 counts per axis.
     step = 0.004
 
@@ -258,6 +311,7 @@ class WegstrPost(Postprocessor):
 
     def rapid(self, x, y):
         self.track(x=x, y=y)
+        self._pos = (x, y)
         self.emit(f"G00 X{self.n(x)} Y{self.n(y)}")
 
     def rapid_z(self, z):
@@ -270,12 +324,21 @@ class WegstrPost(Postprocessor):
 
     def cut(self, x, y):
         self.track(x=x, y=y)
+        self._pos = (x, y)
         self.emit(f"G01 X{self.n(x)} Y{self.n(y)}")
 
-    def tool_change(self, number, diameter):
+    def arc(self, x, y, cx, cy, clockwise):
+        i, j = cx - self._pos[0], cy - self._pos[1]
+        self.track(x=x, y=y)
+        self._pos = (x, y)
+        self.emit(f"{'G02' if clockwise else 'G03'} X{self.n(x)} Y{self.n(y)} "
+                  f"I{self.n(i)} J{self.n(j)}")
+
+    def tool_change(self, number, diameter, tool=None):
         self.rapid_z(self.p.toolchange_z)
         self.emit("M05")
         self.emit(self.comment(f"tool {number}, dia {self.n(diameter)} mm"))
+        self.tool_note(tool)
         # M06 raises the tool-change dialog; the machine requires M00 after it.
         self.emit(f"T{number} M06")
         self.emit("M00")
@@ -306,24 +369,80 @@ def _depth_steps(p: JobParams) -> list[float]:
     return steps
 
 
+def apply_tool(p: JobParams, tool) -> JobParams:
+    """Overlay a tool's established feeds on a job's parameters.
+
+    Only fields the tool actually carries are overlaid: an unset feed leaves the
+    job's own value alone, so a tool that has geometry but no proven numbers yet
+    still selects the right cutter without pretending to know how to run it.
+    """
+    if tool is None:
+        return p
+    changes = {"tool_diameter": tool.diameter}
+    if tool.feed_xy > 0:
+        changes["feed_xy"] = tool.feed_xy
+    if tool.feed_z > 0:
+        changes["feed_z"] = tool.feed_z
+    if tool.cut_z < 0:
+        changes["cut_z"] = tool.cut_z
+    if tool.depth_per_pass > 0:
+        changes["depth_per_pass"] = tool.depth_per_pass
+        changes["multidepth"] = True
+    if tool.spindle_rpm > 0:
+        changes["spindle"] = int(tool.spindle_rpm)
+    return replace(p, **changes)
+
+
+def _emit_path(post, coords, arc_tolerance):
+    """Cut along one polyline, as arcs where the dialect and the shape allow."""
+    if not (arc_tolerance > 0 and post.supports_arcs):
+        for x, y in coords[1:]:
+            post.cut(x, y)
+        return
+    for move in arcfit.fit(coords, tolerance=arc_tolerance,
+                           min_radius=post.min_arc_radius,
+                           max_radius=post.max_arc_radius):
+        if move[0] == "line":
+            post.cut(move[1][0], move[1][1])
+        else:
+            (x, y), (cx, cy), clockwise = move[1], move[2], move[3]
+            post.arc(x, y, cx, cy, clockwise)
+
+
 def paths_to_gcode(paths, p: JobParams, dialect: str = "grbl", meta: dict | None = None,
-                   groups=None, warnings: list[str] | None = None) -> str:
+                   groups=None, warnings: list[str] | None = None,
+                   tool_lookup=None, arc_tolerance: float = 0.0) -> str:
     """Turn ordered LineStrings into G-code.
 
     `groups` is an optional list of (tool_diameter, paths) from a rest-machining
     operation. When more than one tool is present, a tool change is emitted
     between groups.
 
+    `tool_lookup` maps a diameter to a library tool, so each group of a
+    rest-machining job runs at its own cutter's feeds rather than one set of
+    numbers for all of them.
+
+    `arc_tolerance` above zero refits circular runs into G02/G03 on dialects that
+    support them, within that deviation in mm.
+
     Anything the dialect had to clamp or leave out is appended to `warnings`.
     """
     post = POSTPROCESSORS.get(dialect, Postprocessor)(p)
-    post.header(meta or {})
+    base = p
 
     batches = groups if groups else [(p.tool_diameter, paths)]
+    first_tool = tool_lookup(batches[0][0]) if (tool_lookup and batches) else None
+    post.p = apply_tool(base, first_tool)
+    post.header(meta or {})
+    post.tool_note(first_tool)
+
     tool_number = p.tool_number
     for index, (diameter, batch) in enumerate(batches):
+        tool = tool_lookup(diameter) if tool_lookup else None
+        post.p = apply_tool(base, tool) if tool is not None else replace(
+            base, tool_diameter=diameter)
         if index > 0:
-            post.tool_change(tool_number + index, diameter)
+            post.tool_change(tool_number + index, diameter, tool)
         post.spindle_on()
         post.feed_move()
 
@@ -331,14 +450,14 @@ def paths_to_gcode(paths, p: JobParams, dialect: str = "grbl", meta: dict | None
             coords = list(path.coords)
             if len(coords) < 2:
                 continue
-            for z in _depth_steps(p):
+            for z in _depth_steps(post.p):
                 post.rapid(coords[0][0], coords[0][1])
                 post.plunge(z)
                 post.feed_move()
-                for x, y in coords[1:]:
-                    post.cut(x, y)
-                post.rapid_z(p.travel_z)
+                _emit_path(post, coords, arc_tolerance)
+                post.rapid_z(post.p.travel_z)
 
+    post.p = base
     post.footer()
     if warnings is not None:
         warnings.extend(post.finish())
@@ -348,14 +467,25 @@ def paths_to_gcode(paths, p: JobParams, dialect: str = "grbl", meta: dict | None
 
 
 def drills_to_gcode(hits, p: JobParams, dialect: str = "grbl", meta: dict | None = None,
-                    warnings: list[str] | None = None) -> str:
-    """hits: list of (x, y, diameter), already grouped and ordered."""
+                    warnings: list[str] | None = None, tool_lookup=None) -> str:
+    """hits: list of (x, y, diameter), already grouped and ordered.
+
+    Each diameter is looked up as its own drill, so a board with five hole sizes
+    gets five sets of feeds rather than one.
+    """
+    base = p
+    post = POSTPROCESSORS.get(dialect, Postprocessor)(p)
+
+    def tool_for(diameter):
+        return tool_lookup(diameter) if tool_lookup else None
+
     # The header names the tool the operator has to fit first, so it has to be
     # the first hole's drill, not whatever diameter the input payload carried.
+    first_tool = tool_for(hits[0][2]) if hits else None
     if hits:
-        p = replace(p, tool_diameter=hits[0][2])
-    post = POSTPROCESSORS.get(dialect, Postprocessor)(p)
+        post.p = apply_tool(replace(base, tool_diameter=hits[0][2]), first_tool)
     post.header(meta or {})
+    post.tool_note(first_tool)
     post.spindle_on()
 
     current_dia = None
@@ -365,14 +495,17 @@ def drills_to_gcode(hits, p: JobParams, dialect: str = "grbl", meta: dict | None
             current_dia = dia
         elif abs(dia - current_dia) > 1e-6:
             tool_number += 1
-            post.tool_change(tool_number, dia)
+            tool = tool_for(dia)
+            post.p = apply_tool(replace(base, tool_diameter=dia), tool)
+            post.tool_change(tool_number, dia, tool)
             post.spindle_on()
             current_dia = dia
         post.rapid(x, y)
-        for z in _depth_steps(p):
+        for z in _depth_steps(post.p):
             post.plunge(z)
-            post.rapid_z(p.travel_z)
+            post.rapid_z(post.p.travel_z)
 
+    post.p = base
     post.footer()
     if warnings is not None:
         warnings.extend(post.finish())

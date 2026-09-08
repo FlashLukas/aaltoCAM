@@ -16,6 +16,7 @@ from shapely.ops import unary_union
 
 from . import gcode as gc
 from . import geometry as geo
+from . import tools as toollib
 from .graph import Payload, register
 from .params import B, C, F, I, P, S, SH, T, normalize_shapes, normalize_tools
 
@@ -30,17 +31,52 @@ def _resolve(doc, path: str) -> str:
     return os.path.join(doc.base_dir, path)
 
 
+def selected_tool(node):
+    """The library tool a node has been pointed at, if any."""
+    return toollib.get(str(node.params.get("tool", "") or ""))
+
+
 def _tool_width(node) -> float:
-    tool = geo.Tool(
-        diameter=float(node.params.get("tool_dia", 0.2)),
-        shape=node.params.get("tool_shape", "flat"),
-        tip_diameter=float(node.params.get("tip_dia", 0.02)),
-        tip_angle=float(node.params.get("tip_angle", 30.0)),
-    )
+    """Cut width, from the library tool when one is selected.
+
+    A selected tool wins over the typed diameter, so the physical cutter is
+    described in exactly one place.
+    """
+    chosen = selected_tool(node)
+    if chosen is not None:
+        tool = geo.Tool(
+            diameter=chosen.diameter,
+            shape=chosen.shape,
+            tip_diameter=chosen.tip_diameter or 0.02,
+            tip_angle=chosen.tip_angle or 30.0,
+        )
+    else:
+        tool = geo.Tool(
+            diameter=float(node.params.get("tool_dia", 0.2)),
+            shape=node.params.get("tool_shape", "flat"),
+            tip_diameter=float(node.params.get("tip_dia", 0.02)),
+            tip_angle=float(node.params.get("tip_angle", 30.0)),
+        )
     return tool.cut_width(float(node.params.get("cut_depth", 0.1)))
 
 
+def _tool_dia(node, key: str = "tool_dia") -> float:
+    """Plain diameter for the ops that do not model a V-bit."""
+    chosen = selected_tool(node)
+    return chosen.diameter if chosen is not None else float(node.params.get(key, 1.0))
+
+
+# Populate the shared choice list before the descriptors are built. CHOICES is
+# mutated in place on reload, so every descriptor keeps pointing at it.
+toollib.library()
+
+TOOL_CHOICE = C("tool", "Tool", "", toollib.CHOICES, group="Tool",
+                help="Pick a cutter from the tool library. Its diameter replaces "
+                     "the one typed here, and the CNC job can take its feeds.")
+
+
 TOOL_PARAMS = [
+    TOOL_CHOICE,
     F("tool_dia", "Tool diameter", 0.2, unit="mm", minimum=0.001, maximum=20, group="Tool",
       help="For a V-bit this is the maximum usable width."),
     C("tool_shape", "Tool shape", "flat", ["flat", "v"], group="Tool"),
@@ -400,6 +436,7 @@ def op_isolate(doc, node, copper: Payload, region: Payload = None):
 
     return Payload("paths", lines, {
         "tool_diameter": width,
+        "tool": node.params.get("tool", ""),
         "cut_length": geo.cut_length(lines),
         "travel_length": geo.travel_length(lines),
     })
@@ -576,7 +613,8 @@ SIDE_PARAM = C(
 
 @register(
     "cutout", "Board cutout",
-    [F("tool_dia", "Tool diameter", 1.0, unit="mm", minimum=0.05, maximum=10, group="Tool"),
+    [TOOL_CHOICE,
+     F("tool_dia", "Tool diameter", 1.0, unit="mm", minimum=0.05, maximum=10, group="Tool"),
      C("shape", "Outline shape", "rectangle",
        ["rectangle", "hull", "outline input"], group="Cutout",
        help="'outline input' uses the connected Edge.Cuts layer or drawn region."),
@@ -592,7 +630,7 @@ SIDE_PARAM = C(
 )
 def op_cutout(doc, node, copper: Payload, outline_input: Payload = None):
     polys = copper.data
-    dia = float(node.params["tool_dia"])
+    dia = _tool_dia(node)
     if polys.is_empty:
         return Payload("paths", [], {"tool_diameter": dia})
 
@@ -608,6 +646,7 @@ def op_cutout(doc, node, copper: Payload, outline_input: Payload = None):
     lines, cut, collapsed, untabbed = _contour_paths(base, node, dia)
     return Payload("paths", lines, {
         "tool_diameter": dia,
+        "tool": node.params.get("tool", ""),
         "contours": cut,
         "no_room_for_tabs": untabbed,
         "too_small": collapsed,
@@ -618,7 +657,8 @@ def op_cutout(doc, node, copper: Payload, outline_input: Payload = None):
 
 @register(
     "internal_cutout", "Internal cutout",
-    [F("tool_dia", "Tool diameter", 1.0, unit="mm", minimum=0.05, maximum=10, group="Tool"),
+    [TOOL_CHOICE,
+     F("tool_dia", "Tool diameter", 1.0, unit="mm", minimum=0.05, maximum=10, group="Tool"),
      SIDE_PARAM,
      F("margin", "Margin", 0.0, unit="mm", minimum=-10, maximum=50, step=0.05,
        group="Cutout", help="Added in the compensation direction: positive makes "
@@ -640,7 +680,7 @@ def op_internal_cutout(doc, node, openings: Payload):
     finished hole matches what you drew; openings too small for the tool are
     reported rather than skipped silently.
     """
-    dia = float(node.params["tool_dia"])
+    dia = _tool_dia(node)
     polys = as_polygons(openings)
     if polys is None or polys.is_empty:
         return Payload("paths", [], {"tool_diameter": dia})
@@ -648,6 +688,7 @@ def op_internal_cutout(doc, node, openings: Payload):
     lines, cut, collapsed, untabbed = _contour_paths(polys, node, dia)
     return Payload("paths", lines, {
         "tool_diameter": dia,
+        "tool": node.params.get("tool", ""),
         "openings": cut,
         "no_room_for_tabs": untabbed,
         "too_small": collapsed,
@@ -716,7 +757,8 @@ def _circle_segments(radius: float) -> int:
 
 @register(
     "mill_holes", "Mill holes",
-    [F("tool_dia", "Tool diameter", 0.8, unit="mm", minimum=0.05, maximum=10, group="Tool"),
+    [TOOL_CHOICE,
+     F("tool_dia", "Tool diameter", 0.8, unit="mm", minimum=0.05, maximum=10, group="Tool"),
      F("mill_threshold", "Mill at or above", 2.0, unit="mm", minimum=0.05, maximum=30,
        step=0.1, group="Selection",
        help="Holes this size and larger are milled. Match the Drill holes threshold."),
@@ -732,7 +774,7 @@ def _circle_segments(radius: float) -> int:
     inputs=["drills"], output="paths", category="CAM",
 )
 def op_mill_holes(doc, node, drills: Payload):
-    dia = float(node.params["tool_dia"])
+    dia = _tool_dia(node)
     threshold = float(node.params["mill_threshold"])
     ceiling = float(node.params["max_dia"])
     overlap = float(node.params["overlap"])
@@ -768,6 +810,7 @@ def op_mill_holes(doc, node, drills: Payload):
 
     return Payload("paths", lines, {
         "tool_diameter": dia,
+        "tool": node.params.get("tool", ""),
         "holes_milled": milled,
         "holes_too_small": skipped,
         "cut_length": geo.cut_length(lines),
@@ -865,6 +908,16 @@ def op_clearance_check(doc, node, copper: Payload):
        help="Only used for the run-time estimate, never written to the file. "
             "Ignored for machines that pin their own rapid rate, such as Wegstr."),
      C("dialect", "Postprocessor", "grbl", sorted(gc.POSTPROCESSORS), group="Output"),
+     B("feeds_from_tool", "Take feeds from the tool", True, group="Feeds",
+       help="Use the feeds, depth and spindle recorded for the tool the input "
+            "was cut with. Tools with no feeds established leave these fields "
+            "in charge and the job says so."),
+     C("tool", "Tool override", "", toollib.CHOICES, group="Feeds",
+       help="Force a particular tool instead of the one the input carries."),
+     F("arc_tolerance", "Arc fitting", 0.002, unit="mm", minimum=0.0, maximum=0.5,
+       step=0.001, decimals=4, group="Output",
+       help="Refit circular runs as G02/G03 within this deviation, on dialects "
+            "that support arcs. Zero writes line segments only."),
      F("toolchange_z", "Tool change Z", 20.0, unit="mm", minimum=0, maximum=200, step=1,
        group="Output"),
      I("tool_number", "Tool number", 1, minimum=1, maximum=99, group="Output"),
@@ -894,18 +947,56 @@ def op_cnc_job(doc, node, source: Payload):
     dialect = node.params["dialect"]
     meta = {"title": node.name}
     warnings: list[str] = []
+    arc_tolerance = float(node.params.get("arc_tolerance", 0.0))
+
+    # Which cutter's numbers to use: an explicit override on the job, else the
+    # tool the geometry upstream was generated for.
+    groups = source.meta.get("groups") if source.kind == "paths" else None
+    lookup = None
+    named = None
+    if node.params.get("feeds_from_tool", True):
+        library = toollib.library()
+        named = (toollib.get(str(node.params.get("tool", "") or ""))
+                 or toollib.get(str(source.meta.get("tool", "") or "")))
+        if groups or source.kind == "drills":
+            # One cutter per group or per hole size: match each diameter back to
+            # a tool in the library.
+            lookup = library.by_diameter
+        elif named is not None:
+            # A single-tool job. The payload's diameter is a cut width, which for
+            # a V-bit is not the tool's diameter, so never match on it -- the
+            # named tool is the tool.
+            lookup = lambda _diameter, _tool=named: _tool
 
     if source.kind == "paths":
-        groups = source.meta.get("groups")
         text = gc.paths_to_gcode(source.data, params, dialect, meta, groups=groups,
-                                 warnings=warnings)
+                                 warnings=warnings, tool_lookup=lookup,
+                                 arc_tolerance=arc_tolerance)
         stats = {
             "cut_length": source.meta.get("cut_length", geo.cut_length(source.data)),
             "travel_length": source.meta.get("travel_length", geo.travel_length(source.data)),
         }
     else:
-        text = gc.drills_to_gcode(source.data, params, dialect, meta, warnings=warnings)
+        text = gc.drills_to_gcode(source.data, params, dialect, meta, warnings=warnings,
+                                  tool_lookup=lookup)
         stats = {"holes": len(source.data)}
+
+    if named is not None:
+        stats["tool"] = named.id
+        if named.has_feeds:
+            params = gc.apply_tool(params, named)
+            load = named.chip_load(params.feed_xy)
+            if load is not None:
+                stats["chip_load_um"] = load * 1000
+            elif named.spindle_rpm <= 0:
+                warnings.append(
+                    f"No spindle speed recorded for {named.id}, so there is no "
+                    f"chip-load figure. Add the rpm you actually dial in.")
+        else:
+            warnings.append(
+                f"Tool {named.id} has no feeds recorded yet, so this job's own "
+                f"feed fields were used. Add them to the tool library once they "
+                f"have proven themselves.")
 
     stats["lines"] = text.count("\n")
     stats["minutes"] = gc.estimate_minutes(source, params,

@@ -7,7 +7,9 @@ import sys
 import time
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QFont, QKeySequence, QPalette
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import (QAction, QColor, QDesktopServices, QFont,
+                           QKeySequence, QPalette)
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
@@ -28,6 +30,7 @@ from PySide6.QtWidgets import (
 from ..core import REGISTRY, Document
 from ..core import discover
 from ..core import kicad
+from ..core import tools as toollib
 from ..core import project as project_io
 from .canvas import BoardView
 from .paramform import ParamForm
@@ -174,6 +177,15 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(undo)
         edit_menu.addAction(redo)
 
+        tools_menu = self.menuBar().addMenu("&Tools")
+        edit_tools = QAction("Edit tool library...", self)
+        edit_tools.triggered.connect(self.edit_tool_library)
+        tools_menu.addAction(edit_tools)
+        reload_tools = QAction("Reload tool library", self)
+        reload_tools.setShortcut("Ctrl+Shift+T")
+        reload_tools.triggered.connect(self.reload_tool_library)
+        tools_menu.addAction(reload_tools)
+
         view_menu = self.menuBar().addMenu("&View")
         fit = QAction("Fit to board", self)
         fit.setShortcut("F")
@@ -312,6 +324,28 @@ class MainWindow(QMainWindow):
         self.recompute()
         self.view.fit()
         QMessageBox.information(self, "Board loaded", "\n".join(notes))
+
+    def edit_tool_library(self):
+        """Open tools.toml in whatever the desktop uses for .toml files.
+
+        A grid editor would be nicer, but the file is short, commented, and
+        lives somewhere the user should know about anyway.
+        """
+        path = toollib.library().path
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+        self.statusBar().showMessage(f"Tool library: {path}", 8000)
+
+    def reload_tool_library(self):
+        """Re-read tools.toml after an edit and refresh every tool dropdown."""
+        library = toollib.library(reload=True)
+        self.form.clear()
+        self.refresh_list()
+        node = self.current_node()
+        if node is not None:
+            self.form.show_node(self.doc, node)
+        self.recompute()
+        self.statusBar().showMessage(
+            f"Reloaded {len(library.tools)} tools from {library.path}", 6000)
 
     def save_project(self):
         if not self.path:
@@ -578,6 +612,10 @@ class MainWindow(QMainWindow):
                 bits.append(f"{meta['rounded_corners']} corners will be rounded")
         if meta.get("slots"):
             bits.append(f"{meta['slots']} slot(s) in file, not cut")
+        if "tool" in meta:
+            bits.append(f"tool {meta['tool']}")
+        if meta.get("chip_load_um"):
+            bits.append(f"{meta['chip_load_um']:.1f} um/tooth")
         if "minutes" in meta:
             bits.append(f"about {meta['minutes']:.1f} min")
         if "shapes" in meta:

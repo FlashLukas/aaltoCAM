@@ -119,6 +119,55 @@ machine origin.
 Requires KiCad 7 or later installed; `kicad-cli` is found on PATH or in the
 usual install locations, or you can pass `--kicad-cli`.
 
+## The tool library
+
+Every cutter lives in one file, `tools.toml`, in your config directory
+(`%APPDATA%\\aaltocam` on Windows, `~/.config/aaltocam` elsewhere; `AALTOCAM_TOOLS`
+overrides). It is shared by every project, because the same cutters get used
+across boards. **Tools → Edit tool library** opens it, **Reload tool library**
+(Ctrl+Shift+T) picks up your changes.
+
+A tool carries its geometry and the feeds that have been shown to work with it.
+Geometry operations pick a tool instead of having its diameter typed into one
+node and its feeds into another, and the CNC job inherits the feeds from
+whatever tool the geometry was made for. Rest machining looks up each group's
+diameter separately, so three tools mean three sets of feeds rather than one
+compromise.
+
+Feeds of zero mean *not established yet*. Such a tool still gives the operation
+its diameter, but the job keeps its own feed fields and says so in a warning
+rather than inventing numbers. The shipped library has geometry for the LPKF
+mills and end mills, the spiral routers and the drill range, and measured feeds
+for the four that have cut real boards:
+
+| tool | XY | Z | depth |
+|---|---|---|---|
+| 0.15 mm RF mill | 120 | 60 | −0.06 |
+| 1.0 mm end mill | 60 | 60 | −1.0 |
+| 1.0 mm router | 60 | 60 | −1.6 in 0.75 passes |
+| 0.7 mm drill | — | 100 | −1.0 |
+
+Spindle speed is recorded but, on a Wegstr, never commanded: that controller's
+parser has no `S` word, so the spindle is set by hand. The recorded rpm is
+written as a comment beside the tool change, where the operator sees it when the
+machine stops, and used for the chip-load figure in the status bar. Postprocessors
+for machines that do command spindle speed use it normally.
+
+## Arcs
+
+Shapely has no arcs, so a pad outline buffered by the tool radius arrives at the
+postprocessor as a 64-sided polygon. The CNC job refits circular runs and emits
+G02/G03 on dialects that support them — GRBL, LinuxCNC and Wegstr. On the sample
+RF board that takes the isolation job from 1123 lines to 301 and the cutout from
+721 to 74.
+
+The fitting tolerance is a real deviation from the requested path, so the default
+is 0.002 mm — half a Wegstr step. Loosening it to 0.005 buys about ten percent
+more reduction for more than twice the error. Set it to zero for line segments
+only. Straight runs, noisy runs and anything below the dialect's minimum arc
+radius stay as lines, and path direction is preserved, so climb versus
+conventional is unaffected.
+
 ## Travel optimisation
 
 Toolpaths are ordered by greedy nearest-neighbour over both endpoints
@@ -291,8 +340,6 @@ Honest list, since this is one build rather than years of accumulation:
 - Evaluation is synchronous. A board taking several seconds will block the
   window during recompute. Moving evaluation onto a worker thread is the
   obvious next change.
-- Arcs are flattened to line segments, so files are larger than they need
-  to be. No dialect has to support G2/G3 as a result.
 
 ## The Wegstr postprocessor
 
@@ -318,9 +365,9 @@ Tool changes emit `T<n> M06` followed by `M00`, which is the sequence the
 controller wants. Z stays flat, because the Wegstr software applies its own
 surface compensation and a height-mapped file would be compensated twice.
 
-Arcs are still flattened upstream. The machine does support G02/G03 with I/J in
-the XY plane, so emitting real arcs would make files considerably smaller; that
-is a geometry-layer change, not a postprocessor one.
+The machine supports G02/G03 with I/J in the XY plane, and arcs below 0.055 mm
+or above 200 mm radius are refused, so the dialect declares those limits and the
+arc fitter respects them.
 
 ## Verify before you cut
 

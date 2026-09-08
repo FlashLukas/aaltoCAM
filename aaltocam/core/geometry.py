@@ -42,7 +42,18 @@ def _primitive_to_polygon(prim):
     if isinstance(prim, gp.Rectangle):
         if prim.w <= 0 or prim.h <= 0:
             return None
-        return _arcpoly_to_polygon(prim.to_arc_poly())
+        # Built here rather than via prim.to_arc_poly(), which in the released
+        # gerbonara returns an axis-aligned box grown by the rotation instead of
+        # a rotated rectangle -- a 2x1 pad at 0.3 rad comes out 71% oversized,
+        # and oversized copper puts the isolation cut in the wrong place.
+        sin, cos = math.sin(prim.rotation), math.cos(prim.rotation)
+        half_w, half_h = prim.w / 2, prim.h / 2
+        corners = []
+        for dx, dy in ((-half_w, -half_h), (-half_w, half_h),
+                       (half_w, half_h), (half_w, -half_h)):
+            corners.append((prim.x + dx * cos - dy * sin,
+                            prim.y + dx * sin + dy * cos))
+        return Polygon(corners)
 
     if isinstance(prim, gp.Line):
         if math.isclose(prim.x1, prim.x2) and math.isclose(prim.y1, prim.y2):
@@ -69,8 +80,25 @@ def _primitive_to_polygon(prim):
 
 
 def _arcpoly_to_polygon(poly: gp.ArcPoly):
-    flat = poly.approximate_arcs(max_error=ARC_TOLERANCE)
-    pts = [(x, y) for x, y in flat.outline]
+    """Flatten an arc-sided polygon to a Shapely polygon.
+
+    Walks the outline segment by segment rather than calling gerbonara's own
+    ArcPoly.approximate_arcs, which is broken in the released versions: it
+    invokes `segments` as a method when it is a property, and its arc branch
+    references names that were never bound. Every Gerber with a rectangular
+    aperture goes through here, so this path has to work.
+    """
+    pts: list[tuple[float, float]] = []
+    for (x1, y1), (x2, y2), (clockwise, (cx, cy)) in poly.segments:
+        if clockwise is None:
+            pts.append((x1, y1))
+            continue
+        arc = list(gp.approximate_arc(cx, cy, x1, y1, x2, y2, clockwise,
+                                      max_error=ARC_TOLERANCE))
+        if arc:
+            arc.pop()  # the arc's end point is the next segment's start
+        pts.extend((float(x), float(y)) for x, y in arc)
+
     if len(pts) < 3:
         return None
     geom = Polygon(pts)
