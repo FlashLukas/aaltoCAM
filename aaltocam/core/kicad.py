@@ -192,6 +192,9 @@ def open_board(pcb_path: str, side: str = "top", cli: str | None = None,
     """Plot a .kicad_pcb and build the same starting graph as a plot folder."""
     outdir, notes = plot(pcb_path, cli=cli, force=force)
     doc, more = build_board(outdir, side)
+    # Remember the board, so the project can be re-plotted after it is saved,
+    # closed and opened again.
+    doc.source["kicad_pcb"] = os.path.abspath(pcb_path)
     more.append("Coordinates follow KiCad's absolute origin, so the board sits "
                 "wherever it sat on the sheet. Add a Transform set to move to "
                 "zero if you want it at the machine origin.")

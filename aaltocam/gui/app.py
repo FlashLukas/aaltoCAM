@@ -48,8 +48,10 @@ class MainWindow(QMainWindow):
         self.results: dict = {}
         self._undo: list[dict] = []
         self._redo: list[dict] = []
-        #: Board this project was plotted from, for Re-plot.
-        self._kicad_pcb: str | None = None
+        #: Unsaved changes, so closing can offer to save them.
+        self._dirty = False
+        #: Label for the title bar when there is no project file yet.
+        self._subject = ""
 
         self.view = BoardView()
         self.gcode_view = QPlainTextEdit()
@@ -200,12 +202,30 @@ class MainWindow(QMainWindow):
 
     # -- undo --------------------------------------------------------------
 
+    def _update_title(self):
+        name = os.path.basename(self.path) if self.path else (self._subject or "")
+        star = "*" if self._dirty else ""
+        self.setWindowTitle(f"aaltocam{' - ' + name if name else ''}{star}")
+
+    def _mark(self, dirty=True, subject=None):
+        """Record whether there is unsaved work, and retitle the window."""
+        self._dirty = dirty
+        if subject is not None:
+            self._subject = subject
+        self._update_title()
+
+    def board_path(self) -> str:
+        """The .kicad_pcb this project came from, remembered in the document
+        itself so it survives save, load and undo."""
+        return project_io.board_path(self.doc)
+
     def push_undo(self):
         """Snapshot before a change. Every mutation funnels through the
         handlers below, so one call site per handler covers the lot."""
         self._undo.append(self.doc.to_dict())
         del self._undo[:-100]
         self._redo.clear()
+        self._mark(True)
 
     def _restore(self, snapshot, counterpart):
         counterpart.append(self.doc.to_dict())
@@ -215,6 +235,7 @@ class MainWindow(QMainWindow):
         self.doc.base_dir = base
         self.refresh_list(select=selected.id if selected else None)
         self.recompute()
+        self._mark(True)
 
     def undo(self):
         if not self._undo:
@@ -231,17 +252,20 @@ class MainWindow(QMainWindow):
     # -- project -----------------------------------------------------------
 
     def new_project(self):
+        if not self._confirm_discard("Start a new project"):
+            return
         self.doc = Document()
         self.path = None
-        self._kicad_pcb = None
         self.results = {}
         self.form.clear()
         self.refresh_list()
         self.view.clear_all()
         self.gcode_view.clear()
-        self.setWindowTitle("aaltocam")
+        self._mark(False, subject="")
 
     def open_project(self):
+        if not self._confirm_discard("Open another project"):
+            return
         path, _ = QFileDialog.getOpenFileName(
             self, "Open project", "", "aaltocam project (*.toml);;All files (*)")
         if not path:
@@ -252,33 +276,62 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Could not open project", str(exc))
             return
         self.path = path
-        self._kicad_pcb = None
-        self.setWindowTitle(f"aaltocam - {os.path.basename(path)}")
+        self._mark(False, subject=os.path.basename(path))
         self.refresh_list()
         self.recompute()
         self.view.fit()
 
+    def _ask_side(self, sides) -> str | None:
+        """Which copper side to build. Only worth asking when both exist."""
+        if "bottom" not in sides:
+            return "top"
+        if "top" not in sides:
+            return "bottom"
+        box = QMessageBox(self)
+        box.setWindowTitle("Which side?")
+        box.setText("This board has copper on both sides. Which one are you cutting?")
+        box.setInformativeText(
+            "The bottom side is mirrored about Y, so the board is turned over "
+            "left to right. Every layer is mirrored against the same reference, "
+            "which is what keeps the drills in register.")
+        top = box.addButton("Top", QMessageBox.AcceptRole)
+        bottom = box.addButton("Bottom", QMessageBox.AcceptRole)
+        box.addButton(QMessageBox.Cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is top:
+            return "top"
+        if clicked is bottom:
+            return "bottom"
+        return None
+
     def open_board_folder(self):
+        if not self._confirm_discard("Open a board folder"):
+            return
         directory = QFileDialog.getExistingDirectory(self, "Open board folder")
         if not directory:
             return
-        doc, notes = discover.build_board(directory)
+        side = self._ask_side(discover.sides_present(directory))
+        if side is None:
+            return
+        doc, notes = discover.build_board(directory, side)
         if not doc.order:
             QMessageBox.warning(self, "Open board folder", "\n".join(notes) or
                                 "No Gerber or drill files recognised in that folder.")
             return
         self.doc = doc
         self.path = None
-        self._kicad_pcb = None
         self._undo.clear()
         self._redo.clear()
-        self.setWindowTitle(f"aaltocam - {os.path.basename(directory.rstrip(os.sep))}")
+        self._mark(True, subject=os.path.basename(directory.rstrip(os.sep)))
         self.refresh_list()
         self.recompute()
         self.view.fit()
         QMessageBox.information(self, "Board loaded", "\n".join(notes))
 
     def open_kicad_board(self):
+        if not self._confirm_discard("Open a KiCad board"):
+            return
         path, _ = QFileDialog.getOpenFileName(
             self, "Open KiCad board", "", "KiCad board (*.kicad_pcb);;All files (*)")
         if not path:
@@ -291,16 +344,40 @@ class MainWindow(QMainWindow):
         Use after editing in KiCad: the plot is refreshed and the graph rebuilt
         from it, so nothing is left pointing at yesterday's copper.
         """
-        if not self._kicad_pcb:
+        board = self.board_path()
+        if not board:
             QMessageBox.information(self, "Re-plot", "This project did not come from a "
                                                      "KiCad board.")
             return
-        self._load_kicad_board(self._kicad_pcb, force=True)
+        if not os.path.isfile(board):
+            QMessageBox.warning(self, "Re-plot",
+                                f"The board file has moved or gone:\n{board}")
+            return
+        self._load_kicad_board(board, force=True, side=self.doc.source.get("side"))
 
-    def _load_kicad_board(self, path, force):
+    def _load_kicad_board(self, path, force, side=None):
+        if side is None:
+            # Plot first, then ask, because until KiCad has produced the
+            # Gerbers there is no way to know whether there is a bottom side.
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                outdir, _ = kicad.plot(path, force=force)
+            except kicad.KicadCliMissing as exc:
+                QMessageBox.warning(self, "KiCad not found", str(exc))
+                return
+            except Exception as exc:
+                QMessageBox.critical(self, "Could not plot the board", str(exc))
+                return
+            finally:
+                QApplication.restoreOverrideCursor()
+            side = self._ask_side(discover.sides_present(outdir))
+            if side is None:
+                return
+            force = False   # already plotted a moment ago
+
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            doc, notes = kicad.open_board(path, force=force)
+            doc, notes = kicad.open_board(path, side=side, force=force)
         except kicad.KicadCliMissing as exc:
             QMessageBox.warning(self, "KiCad not found", str(exc))
             return
@@ -316,10 +393,9 @@ class MainWindow(QMainWindow):
             return
         self.doc = doc
         self.path = None
-        self._kicad_pcb = path
         self._undo.clear()
         self._redo.clear()
-        self.setWindowTitle(f"aaltocam - {os.path.basename(path)}")
+        self._mark(True, subject=os.path.basename(path))
         self.refresh_list()
         self.recompute()
         self.view.fit()
@@ -351,6 +427,7 @@ class MainWindow(QMainWindow):
         if not self.path:
             return self.save_project_as()
         project_io.save(self.doc, self.path)
+        self._mark(False)
         self.statusBar().showMessage(f"Saved {os.path.basename(self.path)}", 4000)
 
     def save_project_as(self):
@@ -359,8 +436,37 @@ class MainWindow(QMainWindow):
         if not path:
             return
         self.path = path
-        self.setWindowTitle(f"aaltocam - {os.path.basename(path)}")
+        self._mark(self._dirty, subject=os.path.basename(path))
         self.save_project()
+
+    def _confirm_discard(self, what: str) -> bool:
+        """Ask before throwing away unsaved work. True means carry on.
+
+        Saving can itself be cancelled at the file dialog, so the answer is
+        taken from whether the document actually came out clean, not from
+        which button was pressed.
+        """
+        if not self._dirty:
+            return True
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Unsaved changes")
+        name = os.path.basename(self.path) if self.path else "This project"
+        box.setText(f"{name} has unsaved changes.")
+        box.setInformativeText(f"{what} without saving them?")
+        box.setStandardButtons(QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
+        box.setDefaultButton(QMessageBox.Save)
+        answer = box.exec()
+        if answer == QMessageBox.Save:
+            self.save_project()
+            return not self._dirty
+        return answer == QMessageBox.Discard
+
+    def closeEvent(self, event):
+        if self._confirm_discard("Quit"):
+            event.accept()
+        else:
+            event.ignore()
 
     def export_gcode(self):
         node = self.current_node()

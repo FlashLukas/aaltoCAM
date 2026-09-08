@@ -58,7 +58,12 @@ Excellon    ──► Drill holes     ──► CNC job ──► .nc
   parameter descriptors, so adding a parameter needs no GUI code.
 
 Projects are TOML with relative paths: readable, diffable, and safe to keep
-in git next to the KiCad project.
+in git next to the KiCad project. Saving records which side was built and
+which `.kicad_pcb` the plot came from, so **Re-plot from KiCad** still works
+after closing and reopening. Paths are rewritten relative to wherever you save,
+so "save as" into another folder keeps every reference intact. Closing with
+unsaved changes asks first, and the title bar carries a `*` while there are
+any.
 
 ## Operations
 
@@ -322,9 +327,21 @@ on (0, 0) and the drills on (0.30, 0.30) — the 0.3 mm relationship is
 preserved, which is what you want. Zeroing each against itself would put
 both on (0, 0) and shift every hole by 0.3 mm.
 
-Mirroring for the bottom side works the same way: `mirror: y` with the
-top copper as reference flips the board about the reference centre, so
-holes stay where the traces expect them.
+## Both sides
+
+Importing a board asks which side when there is copper on both. The top side
+is built as before. The bottom side puts every layer -- copper, outline and
+drills -- through its own Transform, all mirrored about Y against the *same*
+reference, the board outline where there is one.
+
+That shared reference is the whole point. Mirroring each layer about its own
+bounding box looks correct on screen and drills through the wrong pads,
+because copper and drills have different extents and so different centres.
+One reference, one axis, everything moves by the same rule.
+
+Mirroring about Y means the board is turned over left to right. Set the
+`mirror` parameter on those Transform nodes to `x` if your fixture flips it
+the other way.
 
 ## Height compensation
 

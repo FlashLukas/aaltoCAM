@@ -144,6 +144,10 @@ class Document:
         self._cache: dict[str, Payload] = {}
         self._keys: dict[str, str] = {}
         self.base_dir: str | None = None
+        #: Where this graph came from, so it can be regenerated later: the
+        #: .kicad_pcb it was plotted from, and which side was built. Carried
+        #: through save/load and undo, unlike anything held only by the GUI.
+        self.source: dict = {}
 
     # -- structure ---------------------------------------------------------
 
@@ -269,11 +273,13 @@ class Document:
     # -- persistence -------------------------------------------------------
 
     def to_dict(self) -> dict:
-        return {"version": 1, "nodes": [self.nodes[i].to_dict() for i in self.order]}
+        return {"version": 1, "source": dict(self.source),
+                "nodes": [self.nodes[i].to_dict() for i in self.order]}
 
     @staticmethod
     def from_dict(d: dict) -> "Document":
         doc = Document()
+        doc.source = dict(d.get("source", {}))
         for entry in d.get("nodes", []):
             node = Node.from_dict(entry)
             doc.nodes[node.id] = node

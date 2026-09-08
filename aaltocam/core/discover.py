@@ -62,13 +62,27 @@ def build_board(directory: str, side: str = "top") -> tuple[Document, list[str]]
     Returns the document and a list of notes about what was and was not
     recognised, so the caller can say something useful instead of silently
     producing an empty project.
+
+    For the bottom side every layer is put through a Transform mirrored about
+    the same reference -- the board outline where there is one. Mirroring each
+    layer about its own bounding box would look right on screen and drift out
+    of registration on the machine, which is the failure this avoids.
     """
     found = classify(directory)
     notes: list[str] = []
     doc = Document()
     doc.base_dir = os.path.abspath(directory)
+    doc.source = {"side": side}
 
-    copper_path = found[side] or found["top"] or found["bottom"]
+    wanted = found[side]
+    if wanted is None and found[side] is None:
+        other = "bottom" if side == "top" else "top"
+        wanted = found[other]
+        if wanted is not None:
+            notes.append(f"No {side} copper in this folder; built the {other} side instead.")
+            side = other
+            doc.source["side"] = side
+    copper_path = wanted or found["top"] or found["bottom"]
     if copper_path is None:
         notes.append("No copper layer found.")
         return doc, notes
@@ -80,24 +94,6 @@ def build_board(directory: str, side: str = "top") -> tuple[Document, list[str]]
                      name=os.path.basename(copper_path))
     notes.append(f"Copper: {os.path.basename(copper_path)}")
 
-    isolate = doc.add("isolate", [copper.id], tool_shape="v", passes=2, name="Isolation")
-    doc.add("cnc_job", [isolate.id], cut_z=-0.1, feed_xy=150, name="Isolation job")
-
-    if found["drills"]:
-        drill_path = found["drills"][0]
-        excellon = doc.add("load_excellon", path=rel(drill_path),
-                           name=os.path.basename(drill_path))
-        notes.append(f"Drills: {os.path.basename(drill_path)}")
-        holes = doc.add("drill_holes", [excellon.id], name="Small holes (drill)")
-        doc.add("cnc_job", [holes.id], cut_z=-1.8, multidepth=True, depth_per_pass=0.6,
-                name="Drill job")
-        milled = doc.add("mill_holes", [excellon.id], tool_dia=0.8, name="Large holes (mill)")
-        doc.add("cnc_job", [milled.id], cut_z=-1.8, multidepth=True, depth_per_pass=0.3,
-                feed_xy=150, name="Hole milling job")
-        if len(found["drills"]) > 1:
-            extra = ", ".join(os.path.basename(p) for p in found["drills"][1:])
-            notes.append(f"Other drill files not loaded: {extra}")
-
     outline_id = ""
     if found["outline"]:
         outline = doc.add("load_gerber", path=rel(found["outline"]),
@@ -105,8 +101,47 @@ def build_board(directory: str, side: str = "top") -> tuple[Document, list[str]]
         outline_id = outline.id
         notes.append(f"Outline: {os.path.basename(found['outline'])}")
 
-    cutout = doc.add("cutout", [copper.id, outline_id], name="Board cutout",
-                     shape="outline input" if outline_id else "rectangle")
+    flip = side == "bottom"
+    # One shared reference for every mirror, so the layers stay in register.
+    reference_id = outline_id or copper.id
+
+    def mirrored(source_id: str, label: str) -> str:
+        """A Transform that flips one layer, or the layer itself when not flipping."""
+        if not flip:
+            return source_id
+        node = doc.add("transform", [source_id, reference_id], mirror="y",
+                       name=f"Flip {label}")
+        return node.id
+
+    if flip:
+        notes.append("Bottom side: every layer mirrored about Y against "
+                     f"{'the outline' if outline_id else 'the copper'}, so the board "
+                     "is turned over left to right.")
+
+    copper_id = mirrored(copper.id, "copper")
+    cut_outline_id = mirrored(outline_id, "outline") if outline_id else ""
+
+    isolate = doc.add("isolate", [copper_id], tool_shape="v", passes=2, name="Isolation")
+    doc.add("cnc_job", [isolate.id], cut_z=-0.1, feed_xy=150, name="Isolation job")
+
+    if found["drills"]:
+        drill_path = found["drills"][0]
+        excellon = doc.add("load_excellon", path=rel(drill_path),
+                           name=os.path.basename(drill_path))
+        notes.append(f"Drills: {os.path.basename(drill_path)}")
+        drills_id = mirrored(excellon.id, "drills")
+        holes = doc.add("drill_holes", [drills_id], name="Small holes (drill)")
+        doc.add("cnc_job", [holes.id], cut_z=-1.8, multidepth=True, depth_per_pass=0.6,
+                name="Drill job")
+        milled = doc.add("mill_holes", [drills_id], tool_dia=0.8, name="Large holes (mill)")
+        doc.add("cnc_job", [milled.id], cut_z=-1.8, multidepth=True, depth_per_pass=0.3,
+                feed_xy=150, name="Hole milling job")
+        if len(found["drills"]) > 1:
+            extra = ", ".join(os.path.basename(p) for p in found["drills"][1:])
+            notes.append(f"Other drill files not loaded: {extra}")
+
+    cutout = doc.add("cutout", [copper_id, cut_outline_id], name="Board cutout",
+                     shape="outline input" if cut_outline_id else "rectangle")
     doc.add("cnc_job", [cutout.id], cut_z=-1.8, multidepth=True, depth_per_pass=0.4,
             feed_xy=200, name="Cutout job")
 
@@ -114,3 +149,9 @@ def build_board(directory: str, side: str = "top") -> tuple[Document, list[str]]
         notes.append("Not recognised: " +
                      ", ".join(os.path.basename(p) for p in found["unknown"]))
     return doc, notes
+
+
+def sides_present(directory: str) -> list[str]:
+    """Which copper sides this folder actually has, for asking the user once."""
+    found = classify(directory)
+    return [name for name in ("top", "bottom") if found[name]]
