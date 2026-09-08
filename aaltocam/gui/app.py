@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from ..core import REGISTRY, Document
 from ..core import discover
+from ..core import kicad
 from ..core import project as project_io
 from .canvas import BoardView
 from .paramform import ParamForm
@@ -44,6 +45,8 @@ class MainWindow(QMainWindow):
         self.results: dict = {}
         self._undo: list[dict] = []
         self._redo: list[dict] = []
+        #: Board this project was plotted from, for Re-plot.
+        self._kicad_pcb: str | None = None
 
         self.view = BoardView()
         self.gcode_view = QPlainTextEdit()
@@ -142,6 +145,14 @@ class MainWindow(QMainWindow):
         open_dir.setShortcut("Ctrl+Shift+O")
         open_dir.triggered.connect(self.open_board_folder)
         file_menu.addAction(open_dir)
+        open_pcb = QAction("Open KiCad board...", self)
+        open_pcb.setShortcut("Ctrl+Shift+K")
+        open_pcb.triggered.connect(self.open_kicad_board)
+        file_menu.addAction(open_pcb)
+        replot = QAction("Re-plot from KiCad", self)
+        replot.setShortcut("Ctrl+Shift+R")
+        replot.triggered.connect(self.replot_kicad_board)
+        file_menu.addAction(replot)
         file_menu.addSeparator()
         export = QAction("Export G-code...", self)
         export.setShortcut("Ctrl+E")
@@ -210,6 +221,7 @@ class MainWindow(QMainWindow):
     def new_project(self):
         self.doc = Document()
         self.path = None
+        self._kicad_pcb = None
         self.results = {}
         self.form.clear()
         self.refresh_list()
@@ -228,6 +240,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Could not open project", str(exc))
             return
         self.path = path
+        self._kicad_pcb = None
         self.setWindowTitle(f"aaltocam - {os.path.basename(path)}")
         self.refresh_list()
         self.recompute()
@@ -244,9 +257,57 @@ class MainWindow(QMainWindow):
             return
         self.doc = doc
         self.path = None
+        self._kicad_pcb = None
         self._undo.clear()
         self._redo.clear()
         self.setWindowTitle(f"aaltocam - {os.path.basename(directory.rstrip(os.sep))}")
+        self.refresh_list()
+        self.recompute()
+        self.view.fit()
+        QMessageBox.information(self, "Board loaded", "\n".join(notes))
+
+    def open_kicad_board(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open KiCad board", "", "KiCad board (*.kicad_pcb);;All files (*)")
+        if not path:
+            return
+        self._load_kicad_board(path, force=False)
+
+    def replot_kicad_board(self):
+        """Re-run the plot for the board this project came from.
+
+        Use after editing in KiCad: the plot is refreshed and the graph rebuilt
+        from it, so nothing is left pointing at yesterday's copper.
+        """
+        if not self._kicad_pcb:
+            QMessageBox.information(self, "Re-plot", "This project did not come from a "
+                                                     "KiCad board.")
+            return
+        self._load_kicad_board(self._kicad_pcb, force=True)
+
+    def _load_kicad_board(self, path, force):
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            doc, notes = kicad.open_board(path, force=force)
+        except kicad.KicadCliMissing as exc:
+            QMessageBox.warning(self, "KiCad not found", str(exc))
+            return
+        except Exception as exc:
+            QMessageBox.critical(self, "Could not plot the board", str(exc))
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        if not doc.order:
+            QMessageBox.warning(self, "Open KiCad board", "\n".join(notes) or
+                                "KiCad plotted the board but nothing was recognised.")
+            return
+        self.doc = doc
+        self.path = None
+        self._kicad_pcb = path
+        self._undo.clear()
+        self._redo.clear()
+        self.setWindowTitle(f"aaltocam - {os.path.basename(path)}")
         self.refresh_list()
         self.recompute()
         self.view.fit()

@@ -36,7 +36,8 @@ directory and builds a working graph from what it finds: copper, drills and
 Edge.Cuts wired through isolation, drilling, hole milling and cutout. It
 reports what it recognised and what it skipped rather than silently
 producing an empty project. Filename matching covers KiCad, Altium and
-Eagle conventions.
+Eagle conventions. **File → Open KiCad board...** (Ctrl+Shift+K) skips the
+plot step entirely — see below.
 
 ## How it fits together
 
@@ -83,6 +84,40 @@ A postprocessor can also describe the machine behind it — feed ceiling, rapid
 rate, travel envelope, useful decimals. Those clamp what would otherwise be
 silently wrong, and anything clamped or dropped comes back as a warning on the
 CNC job node rather than being buried in the file.
+
+## Opening a KiCad board
+
+`File → Open KiCad board...` (Ctrl+Shift+K) takes a `.kicad_pcb` directly. It
+does not parse the board: it runs `kicad-cli`, KiCad's own plotter, and imports
+the Gerbers that come out. So the copper is exactly what the plot dialog would
+have produced, zone fills are right by construction, and there is no stale plot
+folder to forget about. `File → Re-plot from KiCad` (Ctrl+Shift+R) refreshes it
+after a board edit.
+
+Reading a `.kicad_pcb` for geometry is a trap worth naming. The file stores
+design intent: tracks are centrelines with a width, pads are shapes that still
+need the footprint's position, rotation and side applied, and zone fills are
+only as good as the last time somebody pressed "fill". Getting any of it subtly
+wrong yields copper that looks plausible and is half a millimetre off. The one
+thing aaltoCAM does read out of the file is the layer table, which is metadata
+rather than geometry.
+
+The plot lands in `<board>-aaltocam-plot/` beside the board file, so a saved
+project keeps working, and it is reused unless the board is newer. Outer copper
+plus Edge.Cuts, one combined drill file, absolute origin for both so copper and
+drills stay in register.
+
+The same works headless — the CLI accepts a project, a folder of Gerbers, or a
+board file:
+
+    aaltocam board.kicad_pcb -o gcode/ --dialect wegstr --replot
+
+Coordinates come out on KiCad's absolute origin, so the board sits wherever it
+sat on the sheet. Add a `Transform` set to move to zero to bring it to the
+machine origin.
+
+Requires KiCad 7 or later installed; `kicad-cli` is found on PATH or in the
+usual install locations, or you can pass `--kicad-cli`.
 
 ## Travel optimisation
 
