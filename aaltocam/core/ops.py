@@ -862,7 +862,8 @@ def op_clearance_check(doc, node, copper: Payload):
        group="Feeds"),
      F("rapid_rate", "Rapid rate", 2000.0, unit="mm/min", minimum=1, maximum=30000,
        step=100, decimals=0, group="Feeds",
-       help="Only used for the run-time estimate, never written to the file."),
+       help="Only used for the run-time estimate, never written to the file. "
+            "Ignored for machines that pin their own rapid rate, such as Wegstr."),
      C("dialect", "Postprocessor", "grbl", sorted(gc.POSTPROCESSORS), group="Output"),
      F("toolchange_z", "Tool change Z", 20.0, unit="mm", minimum=0, maximum=200, step=1,
        group="Output"),
@@ -892,19 +893,24 @@ def op_cnc_job(doc, node, source: Payload):
     )
     dialect = node.params["dialect"]
     meta = {"title": node.name}
+    warnings: list[str] = []
 
     if source.kind == "paths":
         groups = source.meta.get("groups")
-        text = gc.paths_to_gcode(source.data, params, dialect, meta, groups=groups)
+        text = gc.paths_to_gcode(source.data, params, dialect, meta, groups=groups,
+                                 warnings=warnings)
         stats = {
             "cut_length": source.meta.get("cut_length", geo.cut_length(source.data)),
             "travel_length": source.meta.get("travel_length", geo.travel_length(source.data)),
         }
     else:
-        text = gc.drills_to_gcode(source.data, params, dialect, meta)
+        text = gc.drills_to_gcode(source.data, params, dialect, meta, warnings=warnings)
         stats = {"holes": len(source.data)}
 
     stats["lines"] = text.count("\n")
     stats["minutes"] = gc.estimate_minutes(source, params,
-                                           float(node.params.get("rapid_rate", 2000.0)))
+                                           float(node.params.get("rapid_rate", 2000.0)),
+                                           dialect)
+    if warnings:
+        stats["warnings"] = warnings
     return Payload("gcode", text, stats)

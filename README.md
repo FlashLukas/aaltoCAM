@@ -79,6 +79,11 @@ in git next to the KiCad project.
 
 Postprocessors: `grbl`, `linuxcnc`, `generic`, `wegstr`.
 
+A postprocessor can also describe the machine behind it — feed ceiling, rapid
+rate, travel envelope, useful decimals. Those clamp what would otherwise be
+silently wrong, and anything clamped or dropped comes back as a warning on the
+CNC job node rather than being buried in the file.
+
 ## Travel optimisation
 
 Toolpaths are ordered by greedy nearest-neighbour over both endpoints
@@ -254,8 +259,36 @@ Honest list, since this is one build rather than years of accumulation:
 - Arcs are flattened to line segments, so files are larger than they need
   to be. No dialect has to support G2/G3 as a result.
 
+## The Wegstr postprocessor
+
+Written against what the Wegstr CNC software (v3.2.0) actually reads, taken
+from the application rather than from documentation.
+
+The controller accepts G00, G01, G02, G03, the G73/G81/G82/G83 drilling cycles,
+and M00, M03, M04, M05, M06, M47. Everything else is skipped without comment,
+so the dialect relies on none of it — no G4 dwell, no G43, no M2.
+
+Its parser deletes spaces, cuts the first `(`…`)` pair on a line, and then reads
+only the **first** G word. So: one G word per line, and no stray parentheses
+inside a comment, which the postprocessor strips for you.
+
+The machine runs at **170 mm/min maximum, and rapids are no faster** — G00 and
+G01 share the ceiling. Feeds above it are clamped and reported, and the run-time
+estimate uses 170 mm/min for travel regardless of the Rapid rate field, which
+would otherwise be out by more than a factor of ten. One step is 0.004 mm, so
+coordinates are written to three decimals. Travel is 140 × 200 × 40 mm; a job
+whose span does not fit says so.
+
+Tool changes emit `T<n> M06` followed by `M00`, which is the sequence the
+controller wants. Z stays flat, because the Wegstr software applies its own
+surface compensation and a height-mapped file would be compensated twice.
+
+Arcs are still flattened upstream. The machine does support G02/G03 with I/J in
+the XY plane, so emitting real arcs would make files considerably smaller; that
+is a geometry-layer change, not a postprocessor one.
+
 ## Verify before you cut
 
-The `wegstr` postprocessor is conservative but unverified against a real
-controller: flat Z, no M6, M0 for tool changes. Run the first job on scrap
-and read the G-code before trusting it with a board.
+The `wegstr` dialect matches the software's parser and limits, but it has not
+yet been run against the machine itself. Run the first job on scrap and read the
+G-code before trusting it with a board.

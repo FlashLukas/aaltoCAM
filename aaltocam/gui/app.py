@@ -532,6 +532,8 @@ class MainWindow(QMainWindow):
             bits.insert(0, f"tools {tools} mm")
         if meta.get("uncleared_area", 0) > 0.01:
             bits.append(f"{meta['uncleared_area']:.1f} mm2 unreachable")
+        for warning in reversed(meta.get("warnings", [])):
+            bits.insert(0, warning)
         if bits:
             self.statusBar().showMessage("   ".join(bits))
 

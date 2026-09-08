@@ -60,6 +60,8 @@ def main(argv=None):
         if cut is not None:
             extra = f"  cutting {cut:.0f} mm, travel {travel:.0f} mm"
         print(f"{out}  ({result.meta.get('lines', 0)} lines){extra}")
+        for warning in result.meta.get("warnings", []):
+            print(f"  warning: {warning}", file=sys.stderr)
     return status
 
 
