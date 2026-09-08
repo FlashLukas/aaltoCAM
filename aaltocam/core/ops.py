@@ -985,7 +985,8 @@ def op_cnc_job(doc, node, source: Payload):
         stats["tool"] = named.id
         if named.has_feeds:
             params = gc.apply_tool(params, named)
-            load = named.chip_load(params.feed_xy)
+            load = named.chip_load(
+                params.feed_z if named.kind == "drill" else params.feed_xy)
             if load is not None:
                 stats["chip_load_um"] = load * 1000
             elif named.spindle_rpm <= 0:

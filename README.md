@@ -148,10 +148,15 @@ for the four that have cut real boards:
 | 0.7 mm drill | — | 100 | −1.0 |
 
 Spindle speed is recorded but, on a Wegstr, never commanded: that controller's
-parser has no `S` word, so the spindle is set by hand. The recorded rpm is
-written as a comment beside the tool change, where the operator sees it when the
-machine stops, and used for the chip-load figure in the status bar. Postprocessors
-for machines that do command spindle speed use it normally.
+parser has no `S` word, so the spindle is set by hand. The shipped tools all
+record 11000 rpm, which is what the machine runs. The figure is written as a
+comment beside the tool change, where the operator sees it when the machine
+stops, and used for the chip-load readout in the status bar. Postprocessors for
+machines that do command spindle speed use it normally.
+
+Chip load is per tooth, from the XY feed for a mill and the plunge feed for a
+drill. It is only as good as the flute count, which is assumed rather than
+measured — correct it in `tools.toml` and every figure follows.
 
 ## Arcs
 

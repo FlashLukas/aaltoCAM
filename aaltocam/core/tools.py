@@ -61,36 +61,46 @@ class Tool:
         return f"{self.id}  ({', '.join(bits)})"
 
     def chip_load(self, feed: float | None = None) -> float | None:
-        """mm per tooth at the recorded spindle speed, or None if unknowable."""
-        feed = self.feed_xy if feed is None else feed
+        """mm per tooth at the recorded spindle speed, or None if unknowable.
+
+        A drill cuts on its plunge, so its chip load comes from the Z feed; a
+        mill cuts sideways and uses the XY feed.
+        """
+        if feed is None:
+            feed = self.feed_z if self.kind == "drill" else self.feed_xy
         if not (feed > 0 and self.spindle_rpm > 0 and self.flutes > 0):
             return None
         return feed / (self.spindle_rpm * self.flutes)
 
 
+#: The Wegstr spindle runs at 11000 rpm, so that is what every shipped tool
+#: records. It is a property of the machine here, not of the cutter.
+SPINDLE_RPM = 11000
+
 #: Shipped library. The four with feeds were measured from jobs that cut real
 #: boards; the rest carry geometry only, waiting for feeds to be established.
+#: Flute counts are assumed, not measured, and they scale chip load directly.
 SEED: list[Tool] = [
     Tool(id="lpkf-rf-0.15", name="LPKF RF mill 0.15", kind="mill", diameter=0.15,
-         flutes=2, feed_xy=120, feed_z=60, cut_z=-0.06,
+         flutes=2, spindle_rpm=SPINDLE_RPM, feed_xy=120, feed_z=60, cut_z=-0.06,
          source="measured: 10x10SampleChipHolderIP isolation"),
     Tool(id="lpkf-rf-0.25", name="LPKF RF mill 0.25", kind="mill", diameter=0.25,
-         flutes=2),
+         flutes=2, spindle_rpm=SPINDLE_RPM),
     Tool(id="lpkf-end-0.8", name="LPKF end mill 0.8", kind="endmill", diameter=0.8,
-         flutes=2),
+         flutes=2, spindle_rpm=SPINDLE_RPM),
     Tool(id="lpkf-end-1.0", name="LPKF end mill 1.0", kind="endmill", diameter=1.0,
-         flutes=2, feed_xy=60, feed_z=60, cut_z=-1.0,
+         flutes=2, spindle_rpm=SPINDLE_RPM, feed_xy=60, feed_z=60, cut_z=-1.0,
          source="measured: 10x10SampleChipHolderIP hole milling"),
     Tool(id="router-0.6", name="Spiral router 0.6", kind="router", diameter=0.6,
-         flutes=2),
+         flutes=2, spindle_rpm=SPINDLE_RPM),
     Tool(id="router-1.0", name="Spiral router 1.0", kind="router", diameter=1.0,
-         flutes=2, feed_xy=60, feed_z=60, cut_z=-1.6, depth_per_pass=0.75,
+         flutes=2, spindle_rpm=SPINDLE_RPM, feed_xy=60, feed_z=60, cut_z=-1.6, depth_per_pass=0.75,
          source="measured: 10x10SampleChipHolderIP cutout"),
     Tool(id="drill-0.7", name="Spiral drill 0.7", kind="drill", diameter=0.7,
-         flutes=2, feed_xy=60, feed_z=100, cut_z=-1.0,
+         flutes=2, spindle_rpm=SPINDLE_RPM, feed_xy=60, feed_z=100, cut_z=-1.0,
          source="measured: 10x10SampleChipHolderIP drilling"),
 ] + [
-    Tool(id=f"drill-{d:.1f}", name=f"Spiral drill {d:.1f}", kind="drill", diameter=d, flutes=2)
+    Tool(id=f"drill-{d:.1f}", name=f"Spiral drill {d:.1f}", kind="drill", diameter=d, flutes=2, spindle_rpm=SPINDLE_RPM)
     for d in (0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 0.9, 1.0, 1.1)
 ]
 
@@ -106,6 +116,8 @@ HEADER = """\
 # spindle_rpm       advisory. A Wegstr ignores S entirely and is set by hand;
 #                   this is written as a comment at the tool change and used for
 #                   the chip-load figure.
+# flutes            assumed unless you have checked. Chip load scales inversely
+#                   with it, so a wrong count makes that figure wrong.
 # kind              mill | endmill | router | drill | vbit
 """
 
