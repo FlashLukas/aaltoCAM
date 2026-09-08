@@ -1,0 +1,145 @@
+# aaltocam project
+version = 1
+
+[[node]]
+id = "load_gerber_1"
+op = "load_gerber"
+name = "Top copper"
+inputs = []
+visible = true
+
+[node.params]
+invert = false
+path = "demo-F_Cu.gbr"
+
+[[node]]
+id = "isolate_1"
+op = "isolate"
+name = "Isolation"
+inputs = ["load_gerber_1"]
+visible = true
+
+[node.params]
+cut_depth = 0.1
+follow = false
+milling_type = "conventional"
+optimize = true
+overlap = 0.15
+passes = 2
+region_mode = "inside"
+simplify = 0.001
+tip_angle = 30.0
+tip_dia = 0.02
+tool_dia = 0.2
+tool_shape = "v"
+
+[[node]]
+id = "cnc_job_1"
+op = "cnc_job"
+name = "Isolation job"
+inputs = ["isolate_1"]
+visible = true
+
+[node.params]
+cut_z = -0.1
+depth_per_pass = 0.05
+dialect = "grbl"
+dwell = 0.0
+end_code = ""
+feed_xy = 150
+feed_z = 60.0
+multidepth = false
+spindle = 12000
+start_code = ""
+tool_number = 1
+toolchange_z = 20.0
+travel_z = 2.0
+
+[[node]]
+id = "region_1"
+op = "region"
+name = "Openings"
+inputs = []
+visible = true
+
+[node.params]
+expand = 0.0
+shapes = [{type = "rect", points = [[8.0, 7.0], [16.0, 11.0]]}, {type = "poly", points = [[3.0, 13.5], [6.5, 13.5], [6.5, 15.0], [3.0, 15.0]]}]
+subtract = false
+
+[[node]]
+id = "internal_cutout_1"
+op = "internal_cutout"
+name = "Internal cutouts"
+inputs = ["region_1"]
+visible = true
+
+[node.params]
+gap_size = 1.0
+gaps = "4"
+margin = 0.0
+milling_type = "conventional"
+optimize = true
+side = "inside"
+tool_dia = 1.0
+
+[[node]]
+id = "cnc_job_2"
+op = "cnc_job"
+name = "Internal cutout job"
+inputs = ["internal_cutout_1"]
+visible = true
+
+[node.params]
+cut_z = -1.8
+depth_per_pass = 0.4
+dialect = "grbl"
+dwell = 0.0
+end_code = ""
+feed_xy = 200
+feed_z = 60.0
+multidepth = true
+spindle = 12000
+start_code = ""
+tool_number = 1
+toolchange_z = 20.0
+travel_z = 2.0
+
+[[node]]
+id = "cutout_1"
+op = "cutout"
+name = "Board cutout"
+inputs = ["load_gerber_1"]
+visible = true
+
+[node.params]
+gap_size = 2.0
+gaps = "4"
+margin = 0.5
+milling_type = "conventional"
+optimize = true
+shape = "rectangle"
+side = "outside"
+tool_dia = 1.0
+
+[[node]]
+id = "cnc_job_3"
+op = "cnc_job"
+name = "Cutout job"
+inputs = ["cutout_1"]
+visible = true
+
+[node.params]
+cut_z = -1.8
+depth_per_pass = 0.4
+dialect = "grbl"
+dwell = 0.0
+end_code = ""
+feed_xy = 200
+feed_z = 60.0
+multidepth = true
+spindle = 12000
+start_code = ""
+tool_number = 1
+toolchange_z = 20.0
+travel_z = 2.0

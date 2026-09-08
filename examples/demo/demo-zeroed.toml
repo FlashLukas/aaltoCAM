@@ -1,0 +1,171 @@
+# aaltocam project
+version = 1
+
+[[node]]
+id = "load_gerber_1"
+op = "load_gerber"
+name = "Top copper"
+inputs = []
+visible = true
+
+[node.params]
+invert = false
+path = "demo-F_Cu.gbr"
+
+[[node]]
+id = "load_excellon_1"
+op = "load_excellon"
+name = "Drill file"
+inputs = []
+visible = true
+
+[node.params]
+max_dia = 10.0
+min_dia = 0.0
+path = "demo.drl"
+
+[[node]]
+id = "transform_1"
+op = "transform"
+name = "Copper to origin"
+inputs = ["load_gerber_1", "load_gerber_1"]
+visible = true
+
+[node.params]
+align = "bottom left"
+mirror = "none"
+offset_x = 1.0
+offset_y = 1.0
+rotate = 0.0
+scale = 1.0
+
+[[node]]
+id = "transform_2"
+op = "transform"
+name = "Drills to origin"
+inputs = ["load_excellon_1", "load_gerber_1"]
+visible = true
+
+[node.params]
+align = "bottom left"
+mirror = "none"
+offset_x = 1.0
+offset_y = 1.0
+rotate = 0.0
+scale = 1.0
+
+[[node]]
+id = "isolate_1"
+op = "isolate"
+name = "Isolation"
+inputs = ["transform_1"]
+visible = true
+
+[node.params]
+cut_depth = 0.1
+follow = false
+milling_type = "conventional"
+optimize = true
+overlap = 0.15
+passes = 2
+simplify = 0.001
+tip_angle = 30.0
+tip_dia = 0.02
+tool_dia = 0.2
+tool_shape = "v"
+
+[[node]]
+id = "cnc_job_1"
+op = "cnc_job"
+name = "Isolation job"
+inputs = ["isolate_1"]
+visible = true
+
+[node.params]
+cut_z = -0.1
+depth_per_pass = 0.05
+dialect = "grbl"
+dwell = 0.0
+end_code = ""
+feed_xy = 150
+feed_z = 60.0
+multidepth = false
+spindle = 12000
+start_code = ""
+tool_number = 1
+toolchange_z = 20.0
+travel_z = 2.0
+
+[[node]]
+id = "drill_holes_1"
+op = "drill_holes"
+name = "Small holes (drill)"
+inputs = ["transform_2"]
+visible = true
+
+[node.params]
+max_dia = 10.0
+mill_threshold = 0.9
+min_dia = 0.0
+optimize = true
+split_large = true
+
+[[node]]
+id = "cnc_job_2"
+op = "cnc_job"
+name = "Drill job"
+inputs = ["drill_holes_1"]
+visible = true
+
+[node.params]
+cut_z = -1.8
+depth_per_pass = 0.6
+dialect = "grbl"
+dwell = 0.0
+end_code = ""
+feed_xy = 120.0
+feed_z = 60.0
+multidepth = true
+spindle = 12000
+start_code = ""
+tool_number = 1
+toolchange_z = 20.0
+travel_z = 2.0
+
+[[node]]
+id = "mill_holes_1"
+op = "mill_holes"
+name = "Large holes (mill)"
+inputs = ["transform_2"]
+visible = true
+
+[node.params]
+clear_center = false
+max_dia = 30.0
+mill_threshold = 0.9
+milling_type = "conventional"
+optimize = true
+overlap = 0.3
+tool_dia = 0.6
+
+[[node]]
+id = "cnc_job_3"
+op = "cnc_job"
+name = "Hole milling job"
+inputs = ["mill_holes_1"]
+visible = true
+
+[node.params]
+cut_z = -1.8
+depth_per_pass = 0.3
+dialect = "grbl"
+dwell = 0.0
+end_code = ""
+feed_xy = 120.0
+feed_z = 60.0
+multidepth = true
+spindle = 12000
+start_code = ""
+tool_number = 1
+toolchange_z = 20.0
+travel_z = 2.0
