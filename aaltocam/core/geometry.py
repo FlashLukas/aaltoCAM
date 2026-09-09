@@ -155,6 +155,58 @@ def to_multipolygon(geom) -> MultiPolygon:
     return MultiPolygon()
 
 
+def enclosed_region(geom, midline: bool = True) -> MultiPolygon:
+    """The area a drawn profile encloses, rather than the ink of the profile.
+
+    A board outline does not arrive as a board. KiCad plots Edge.Cuts with a
+    thin aperture, so what reaches us is a ribbon a few hundredths wide tracing
+    where the edge goes -- a polygon whose hole is the entire board. Cut its
+    boundary and you cut twice: once round the outside, correctly, and once
+    round the inside, a tool width in from the edge, through the middle of the
+    part. The second pass has no reason to exist and is the one that ruins the
+    board.
+
+    So fill each ribbon, then apply the even-odd rule to what is left: a filled
+    shape sitting inside another is a window, not material. Nesting is counted
+    rather than assumed, so a slot inside a window inside the board comes out
+    right.
+
+    With `midline` the result is pulled in by half the stroke width, because a
+    drawn edge means its centreline -- the ribbon straddles the true edge. The
+    width is measured from the ribbon itself (area over mean perimeter) rather
+    than read from the file, since a profile may mix apertures, as KiCad's does
+    when a footprint contributes to the edge. A shape that arrives already
+    solid has no ribbon to measure, so it passes through untouched.
+    """
+    parts = [p for p in to_multipolygon(geom).geoms if not p.is_empty]
+    if not parts:
+        return MultiPolygon()
+
+    filled = []
+    for part in parts:
+        outer = Polygon(part.exterior)
+        # Ribbon area over mean perimeter: for anything long and thin that is
+        # its width, and for a solid shape it is meaningless but unused.
+        width = 0.0
+        if part.interiors and part.length > 0:
+            width = 2 * part.area / part.length
+        shrunk = outer.buffer(-width / 2, quad_segs=BUFFER_SEGMENTS) if midline and width else outer
+        for piece in to_multipolygon(shrunk).geoms:
+            filled.append(piece)
+    if not filled:
+        return MultiPolygon()
+
+    # Even-odd, by exclusive or: a point inside an odd number of loops is
+    # material and an even number is not. Nesting therefore needs no counting
+    # and no assumption about which loop is the board -- a slot inside a window
+    # inside the board alternates on its own, and loops that merely sit side by
+    # side simply add up.
+    region = filled[0]
+    for shape in filled[1:]:
+        region = region.symmetric_difference(shape)
+    return to_multipolygon(region)
+
+
 # --------------------------------------------------------------------------
 # Tool models
 # --------------------------------------------------------------------------

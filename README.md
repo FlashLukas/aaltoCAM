@@ -274,6 +274,24 @@ Offsetting whole polygons rather than individual rings means holes come out
 right for free: a negative offset shrinks an outline and grows any hole
 inside it, which is exactly what cutting an opening to size requires.
 
+### The outline is drawn, not filled
+
+`Edge.Cuts` never arrives as a board. KiCad plots it with a thin aperture, so
+what reaches aaltoCAM is a ribbon a few hundredths wide tracing where the edge
+goes — a polygon whose hole is the entire board. Cutting that ribbon's
+boundary gives two passes: one round the outside, correct, and one a tool
+width inside the edge, straight through the part.
+
+So **Board cutout** takes the area the ribbon *encloses* before it offsets
+anything. Nesting follows the even-odd rule, which is what a profile layer
+means anyway: a loop inside a loop is a window, a loop inside that is an
+island. The recovered edge is the centreline of the stroke rather than its
+outer side, since a drawn edge means the line's centre — worth roughly
+0.025 mm on a KiCad plot, which is six machine steps on the Wegstr.
+
+A shape that arrives already solid — a Region node you drew, or copper — has
+no ribbon to measure and passes through untouched.
+
 ## Checking before you cut
 
 **Clearance check** finds the gaps your isolation tool cannot fit into.

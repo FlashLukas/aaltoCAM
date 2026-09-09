@@ -685,7 +685,13 @@ def op_cutout(doc, node, copper: Payload, outline_input: Payload = None):
     shape = node.params["shape"]
     given = as_polygons(outline_input)
     if shape == "outline input" and given is not None and not given.is_empty:
-        base = given
+        # Edge.Cuts is drawn, not filled: what arrives is a thin ribbon along
+        # the edge, and cutting its boundary would run the tool round the
+        # outside of the board and again a tool width inside it. Take the area
+        # the ribbon encloses instead.
+        base = geo.enclosed_region(given)
+        if base.is_empty:
+            base = given
     elif shape == "hull":
         base = polys.convex_hull
     else:
