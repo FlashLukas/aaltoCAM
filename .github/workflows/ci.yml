@@ -1,0 +1,59 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push makes an in-flight run of the same branch irrelevant.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Python ${{ matrix.python-version }}
+    runs-on: windows-latest
+
+    # The suite takes under a minute. A GUI test that opens a modal dialog
+    # waits for an answer that never comes under offscreen Qt, and without a
+    # cap that hang would sit on a runner for six hours.
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor claimed in pyproject.toml, and the version releases are
+        # built with. Everything between the two is assumed, not tested.
+        python-version: ['3.11', '3.13']
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        shell: powershell
+        run: |
+          # GitHub sets this to 'stop', which makes any native command writing
+          # to stderr fatal -- pip warns there routinely.
+          $ErrorActionPreference = 'Continue'
+          python -m pip install --upgrade pip
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip install ".[gui]" pytest
+          exit $LASTEXITCODE
+
+      - name: Test
+        shell: powershell
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $ErrorActionPreference = 'Continue'
+          python -m pytest tests/ -q
+          exit $LASTEXITCODE
