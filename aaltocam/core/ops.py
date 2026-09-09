@@ -24,6 +24,19 @@ from .params import B, C, F, I, P, S, SH, T, normalize_shapes, normalize_tools
 MILLING = ["conventional", "climb"]
 
 
+def _to_mm(value, unit) -> float:
+    """A gerbonara length in millimetres, whatever unit the file used.
+
+    Kept separate because the failure it prevents is silent: an inch file read
+    as millimetres produces perfectly well-formed geometry in the wrong place.
+    """
+    if value is None:
+        return 0.0
+    if unit is None:
+        return float(value)
+    return float(unit.convert_to("mm", value))
+
+
 def _resolve(doc, path: str) -> str:
     if not path:
         return path
@@ -177,10 +190,15 @@ def op_load_excellon(doc, node):
     hi = float(node.params["max_dia"])
     hits = []
     for obj in excellon.drills():
-        dia = float(obj.tool.diameter) if obj.tool else 0.0
+        # gerbonara reports coordinates in the file's own units, and KiCad
+        # writes Excellon in inches as readily as in millimetres. Everything
+        # downstream of here -- the copper, the toolpaths, the G-code -- is mm,
+        # so an unconverted inch file puts the holes a factor of 25.4 away from
+        # the board and nothing complains.
+        dia = _to_mm(obj.tool.diameter, obj.tool.unit) if obj.tool else 0.0
         if not (lo - 1e-9 <= dia <= hi + 1e-9):
             continue
-        hits.append((float(obj.x), float(obj.y), dia))
+        hits.append((_to_mm(obj.x, obj.unit), _to_mm(obj.y, obj.unit), dia))
     hits.sort(key=lambda h: (round(h[2], 4), h[1], h[0]))
     slots = sum(1 for _ in excellon.slots())
     return Payload("drills", hits, {"source": os.path.basename(path), "slots": slots})

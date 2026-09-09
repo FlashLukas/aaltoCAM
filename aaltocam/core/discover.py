@@ -27,6 +27,25 @@ def _matches(name: str, patterns) -> bool:
     return any(re.search(p, lowered) for p in patterns)
 
 
+def _preferred_drill(paths: list[str]) -> str:
+    """Which of several drill files is the one wanted.
+
+    KiCad splits drilling into a plated file and a non-plated one, and NPTH
+    sorts before PTH. Taking the first alphabetically therefore picks the
+    mounting holes over the component holes -- and on a board with no
+    unplated holes at all, an empty file over the real one.
+
+    Plated first, then alphabetical. Loading both would mean two drill nodes,
+    which is a decision for whoever opens the folder rather than one to make
+    on their behalf; the others are still named in the import notes.
+    """
+    def rank(path: str):
+        name = os.path.basename(path).lower()
+        return (1 if "npth" in name else 0, name)
+
+    return sorted(paths, key=rank)[0]
+
+
 def classify(directory: str) -> dict:
     """Sort a directory's files into the roles aaltocam cares about."""
     found = {"top": None, "bottom": None, "outline": None, "drills": [], "unknown": []}
@@ -120,12 +139,13 @@ def build_board(directory: str, side: str = "top", origin: bool = False,
 
     drills_source = ""
     if found["drills"]:
-        drill_path = found["drills"][0]
+        drill_path = _preferred_drill(found["drills"])
         drills_source = doc.add("load_excellon", path=rel(drill_path),
                                 name=os.path.basename(drill_path)).id
         notes.append(f"Drills: {os.path.basename(drill_path)}")
-        if len(found["drills"]) > 1:
-            extra = ", ".join(os.path.basename(p) for p in found["drills"][1:])
+        others = [p for p in found["drills"] if p != drill_path]
+        if others:
+            extra = ", ".join(os.path.basename(p) for p in others)
             notes.append(f"Other drill files not loaded: {extra}")
 
     # -- where those layers sit -------------------------------------------
