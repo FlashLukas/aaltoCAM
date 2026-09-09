@@ -27,9 +27,24 @@ aaltocam examples/demo/demo.toml -o out/   # headless, writes out/*.nc
 aaltocam examples/demo/demo.toml --list    # show the graph
 ```
 
-In the GUI: **Add** builds a node, the panel on the right edits it, the
-board view updates as you type. Ctrl+E exports the selected CNC job,
-Ctrl+Z and Ctrl+Shift+Z undo and redo.
+In the GUI: the palette under the operation list adds a node, the panel on
+the right edits it, the board view updates as you type. Ctrl+E exports the
+selected CNC job, Ctrl+Z and Ctrl+Shift+Z undo and redo.
+
+The palette is a grid of icons grouped the way the operations are categorised
+— Source, CAM, Edit, Output — with the name and a one-line description on the
+tooltip. The icons are drawn in code on a 100×100 grid rather than shipped as
+files, so they stay sharp at any DPI and take their line colour from the
+running palette, which keeps them legible in a light or a dark theme.
+
+The application mark is the program's own subject: a copper track with a pad,
+and the isolation channel milled around it. It is built the way the program
+builds a toolpath — the channel is the copper shape grown by a tool radius —
+so the mark cannot drift away from what the software does. Below about 28 px
+it falls back to just the pad and its channel, because a favicon has room for
+one idea. `python -m aaltocam.gui.icons <dir>` writes it out as `.ico` and
+`.png`; the installer uses that for the desktop shortcut and the standalone
+build, so the shortcut and the running window always show the same mark.
 
 **File → Open board folder** (Ctrl+Shift+O) points at a KiCad plot
 directory and builds a working graph from what it finds: copper, drills and

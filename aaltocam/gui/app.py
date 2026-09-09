@@ -6,7 +6,7 @@ import os
 import sys
 import time
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import (QAction, QColor, QDesktopServices, QFont,
                            QKeySequence, QPalette)
@@ -17,17 +17,17 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDockWidget,
     QFileDialog,
+    QGridLayout,
     QLabel,
     QRadioButton,
     QHBoxLayout,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
-    QMenu,
     QMessageBox,
     QPlainTextEdit,
-    QPushButton,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -37,6 +37,7 @@ from ..core import discover
 from ..core import kicad
 from ..core import tools as toollib
 from ..core import project as project_io
+from . import icons
 from .canvas import BoardView
 from .paramform import ParamForm
 
@@ -47,6 +48,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("aaltocam")
+        self.setWindowIcon(icons.app_icon())
         self.resize(1400, 900)
         self.doc = Document()
         self.path: str | None = None
@@ -99,34 +101,80 @@ class MainWindow(QMainWindow):
         self.node_list.itemChanged.connect(self._on_item_changed)
         layout.addWidget(self.node_list, 1)
 
+        layout.addWidget(self._toolbox())
+
         row = QHBoxLayout()
-        add_button = QPushButton("Add")
-        add_button.setMenu(self._add_menu())
-        duplicate = QPushButton("Duplicate")
-        duplicate.clicked.connect(self.duplicate_node)
-        delete = QPushButton("Delete")
-        delete.clicked.connect(self.delete_node)
-        for widget in (add_button, duplicate, delete):
-            row.addWidget(widget)
+        row.addStretch(1)
+        for name, slot, tip in (
+            ("duplicate", self.duplicate_node, "Duplicate the selected operation"),
+            ("delete", self.delete_node, "Delete the selected operation"),
+        ):
+            button = QToolButton()
+            button.setIcon(icons.action_icon(name, self._ink()))
+            button.setIconSize(QSize(20, 20))
+            button.setFixedSize(30, 30)
+            button.setAutoRaise(True)
+            button.setToolTip(tip)
+            button.clicked.connect(slot)
+            row.addWidget(button)
         layout.addLayout(row)
 
         dock.setWidget(panel)
         self.addDockWidget(Qt.LeftDockWidgetArea, dock)
 
-    def _add_menu(self) -> QMenu:
-        menu = QMenu(self)
+    def _ink(self):
+        """Line colour for the icons, taken from the running palette so the set
+        stays legible whichever theme Qt picked."""
+        return self.palette().color(QPalette.WindowText)
+
+    def _toolbox(self) -> QWidget:
+        """The operation palette: click a picture instead of hunting a submenu.
+
+        Grouped the way the operations are categorised, four to a row, with the
+        name and the help text on the tooltip -- a grid of unlabelled icons is
+        only friendly once you already know it.
+        """
+        box = QWidget()
+        column = QVBoxLayout(box)
+        column.setContentsMargins(0, 4, 0, 0)
+        column.setSpacing(2)
+
         by_category: dict[str, list] = {}
         for name, operation in REGISTRY.items():
             by_category.setdefault(operation.category, []).append((name, operation))
+
+        ink = self._ink()
         for category in ("Source", "CAM", "Edit", "Output"):
             entries = by_category.get(category)
             if not entries:
                 continue
-            sub = menu.addMenu(category)
-            for name, operation in sorted(entries, key=lambda e: e[1].label):
-                action = sub.addAction(operation.label)
-                action.triggered.connect(lambda _c=False, n=name: self.add_node(n))
-        return menu
+            heading = QLabel(category.upper())
+            font = heading.font()
+            font.setPointSizeF(max(7.0, font.pointSizeF() - 1.5))
+            font.setBold(True)
+            heading.setFont(font)
+            heading.setStyleSheet("color: palette(mid); margin-top: 4px;")
+            column.addWidget(heading)
+
+            grid = QGridLayout()
+            grid.setSpacing(2)
+            for index, (name, operation) in enumerate(
+                    sorted(entries, key=lambda e: e[1].label)):
+                button = QToolButton()
+                button.setIcon(icons.op_icon(name, ink))
+                button.setIconSize(QSize(26, 26))
+                button.setFixedSize(34, 34)
+                button.setAutoRaise(True)
+                tip = operation.label
+                doc = (operation.func.__doc__ or "").strip().split("\n")[0]
+                if doc:
+                    tip += f"\n{doc}"
+                button.setToolTip(tip)
+                button.clicked.connect(lambda _c=False, n=name: self.add_node(n))
+                grid.addWidget(button, index // 4, index % 4)
+            grid.setColumnStretch(4, 1)
+            column.addLayout(grid)
+        return box
 
     def _build_param_dock(self):
         dock = QDockWidget("Parameters", self)
@@ -820,7 +868,7 @@ class MainWindow(QMainWindow):
                 bits.append(f"{meta['rounded_corners']} corners will be rounded")
         if meta.get("slots"):
             bits.append(f"{meta['slots']} slot(s) in file, not cut")
-        if "tool" in meta:
+        if meta.get("tool"):
             bits.append(f"tool {meta['tool']}")
         if meta.get("chip_load_um"):
             bits.append(f"{meta['chip_load_um']:.1f} um/tooth")
@@ -895,6 +943,8 @@ def main(argv=None):
     app = QApplication(argv)
     app.setStyle("Fusion")
     app.setPalette(dark_palette())
+    app.setApplicationName("aaltocam")
+    app.setWindowIcon(icons.app_icon())
     window = MainWindow()
 
     files = [a for a in argv[1:] if not a.startswith("-")]

@@ -123,6 +123,10 @@ def build_board(directory: str, side: str = "top",
                        mirror="y" if flip else "none",
                        align="bottom left" if origin else "none",
                        name=f"{what} {label}")
+        # The untransformed layer still sits where the plot put it, so leaving
+        # it drawn shows the board twice, in two places. Hide it; the checkbox
+        # in the list turns it back on.
+        doc.nodes[source_id].visible = False
         return node.id
 
     if flip:
