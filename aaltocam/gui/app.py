@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDockWidget,
     QFileDialog,
+    QFrame,
     QGridLayout,
     QLabel,
     QRadioButton,
@@ -83,8 +84,8 @@ class MainWindow(QMainWindow):
         self.view.shapes_edited.connect(self._on_shapes_edited)
         self.view.draw_finished.connect(
             lambda: self.statusBar().showMessage("Drawing cancelled", 2000))
-        self.view.cursor_moved.connect(
-            lambda x, y: self.statusBar().showMessage(f"X {x:.3f}   Y {y:.3f}", 2000))
+        self.view.cursor_moved.connect(self._show_cursor)
+        self.view.measured.connect(self._show_measure)
         self.statusBar().showMessage("New project. Add a Gerber file to start.")
 
     # -- docks -------------------------------------------------------------
@@ -127,37 +128,43 @@ class MainWindow(QMainWindow):
         stays legible whichever theme Qt picked."""
         return self.palette().color(QPalette.WindowText)
 
+    #: Palette sections, in the order work actually flows: bring geometry in,
+    #: move it about, cut it, write it out. The registry's own category names
+    #: are an implementation detail, so they are renamed for the panel.
+    TOOLBOX_GROUPS = (
+        ("Source", "Add"),
+        ("Edit", "Transform"),
+        ("CAM", "CAM"),
+        ("Output", "Export"),
+    )
+
     def _toolbox(self) -> QWidget:
         """The operation palette: click a picture instead of hunting a submenu.
 
-        Grouped the way the operations are categorised, four to a row, with the
-        name and the help text on the tooltip -- a grid of unlabelled icons is
-        only friendly once you already know it.
+        Four to a row under a labelled rule, with the name and the help text on
+        the tooltip -- a grid of unlabelled icons is only friendly once you
+        already know it, and the rules are what stop thirteen pictures reading
+        as one undifferentiated block.
         """
         box = QWidget()
         column = QVBoxLayout(box)
-        column.setContentsMargins(0, 4, 0, 0)
-        column.setSpacing(2)
+        column.setContentsMargins(0, 4, 0, 2)
+        column.setSpacing(0)
 
         by_category: dict[str, list] = {}
         for name, operation in REGISTRY.items():
             by_category.setdefault(operation.category, []).append((name, operation))
 
         ink = self._ink()
-        for category in ("Source", "CAM", "Edit", "Output"):
+        for position, (category, title) in enumerate(self.TOOLBOX_GROUPS):
             entries = by_category.get(category)
             if not entries:
                 continue
-            heading = QLabel(category.upper())
-            font = heading.font()
-            font.setPointSizeF(max(7.0, font.pointSizeF() - 1.5))
-            font.setBold(True)
-            heading.setFont(font)
-            heading.setStyleSheet("color: palette(mid); margin-top: 4px;")
-            column.addWidget(heading)
+            column.addWidget(self._toolbox_heading(title, first=position == 0))
 
             grid = QGridLayout()
             grid.setSpacing(2)
+            grid.setContentsMargins(0, 2, 0, 6)
             for index, (name, operation) in enumerate(
                     sorted(entries, key=lambda e: e[1].label)):
                 button = QToolButton()
@@ -175,6 +182,29 @@ class MainWindow(QMainWindow):
             grid.setColumnStretch(4, 1)
             column.addLayout(grid)
         return box
+
+    def _toolbox_heading(self, title: str, first: bool = False) -> QWidget:
+        """A section label with a rule running off to the right of it."""
+        row = QWidget()
+        line = QHBoxLayout(row)
+        line.setContentsMargins(0, 0 if first else 6, 2, 0)
+        line.setSpacing(6)
+
+        label = QLabel(title.upper())
+        font = label.font()
+        font.setPointSizeF(max(7.0, font.pointSizeF() - 1.0))
+        font.setBold(True)
+        label.setFont(font)
+        label.setStyleSheet("color: palette(bright-text);")
+        line.addWidget(label)
+
+        rule = QFrame()
+        rule.setFrameShape(QFrame.HLine)
+        rule.setFrameShadow(QFrame.Plain)
+        rule.setFixedHeight(1)
+        rule.setStyleSheet("color: palette(mid); background: palette(mid);")
+        line.addWidget(rule, 1)
+        return row
 
     def _build_param_dock(self):
         dock = QDockWidget("Parameters", self)
@@ -252,6 +282,19 @@ class MainWindow(QMainWindow):
         snap = QAction("Snap shapes to 0.1 mm", self, checkable=True, checked=True)
         snap.triggered.connect(lambda on: setattr(self.view, "snap", 0.1 if on else 0.0))
         view_menu.addAction(snap)
+
+        view_menu.addSeparator()
+        self.measure_action = QAction("Measure", self, checkable=True)
+        self.measure_action.setShortcut("M")
+        self.measure_action.setToolTip(
+            "Click two points. Shift constrains to one axis, right-click or "
+            "Escape clears.")
+        self.measure_action.triggered.connect(self._toggle_measure)
+        view_menu.addAction(self.measure_action)
+        self.clip_action = QAction("Measure from origin", self, checkable=True)
+        self.clip_action.setToolTip("Pin one end of the measurement to X0 Y0.")
+        self.clip_action.triggered.connect(self.view.set_clip_to_origin)
+        view_menu.addAction(self.clip_action)
 
     # -- undo --------------------------------------------------------------
 
@@ -764,6 +807,30 @@ class MainWindow(QMainWindow):
     def _on_rename(self, node_id, name):
         self.doc.nodes[node_id].name = name or node_id
         self.refresh_list(select=node_id)
+
+    def _show_cursor(self, x, y):
+        # While measuring, the points carry their own labels and the reading
+        # owns the status bar; a cursor readout would just flicker over it.
+        if self.measure_action.isChecked():
+            return
+        self.statusBar().showMessage(f"X {x:.3f}   Y {y:.3f}", 2000)
+
+    def _toggle_measure(self, on):
+        self.view.start_measure(on)
+        if on:
+            self.statusBar().showMessage(
+                "Measuring: click two points. Shift locks to one axis, "
+                "right-click clears, M leaves.")
+        else:
+            self.statusBar().clearMessage()
+
+    def _show_measure(self, result):
+        """Keep the reading in the status bar too, so it survives a pan."""
+        if result is None:
+            return
+        distance, dx, dy = result
+        self.statusBar().showMessage(
+            f"Distance {distance:.3f} mm    Δx {dx:+.3f}    Δy {dy:+.3f}")
 
     def _toggle_travel(self, checked):
         self.view.show_travel = checked

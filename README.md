@@ -342,6 +342,29 @@ are counted and reported rather than silently skipped, and circle
 resolution follows the radius so a few holes do not become thousands of
 lines of G-code.
 
+## Reading the board off the screen
+
+Zero is marked. Two dim lines cross the whole view at X0 and Y0, drawn under
+the board so they never hide copper, and a small crosshair sits on the origin
+itself in the foreground so it stays findable over a filled pour. Both are
+painted in screen pixels, so the marker is the same size whatever the zoom.
+
+**Measure** (`M`, or the View menu) turns clicks into distances. Click two
+points: each end is labelled with its X and Y, and the line between them
+carries the length, `Δx`, `Δy` and the angle. The reading also goes to the
+status bar, where it survives panning about. Hold **Shift** to lock to one
+axis — useful for a board width when your click is a hundredth off the corner.
+Right-click or Escape clears, a third click starts a fresh measurement, and
+`M` again leaves.
+
+**Measure from origin** pins one end to X0 Y0. Distances from the machine
+origin are the ones you actually key into the controller, and clicking exactly
+zero by hand never works. Turning it on part-way through keeps the point you
+already picked and re-references it to zero rather than throwing it away.
+
+Middle-drag pans in every mode, including while measuring or drawing a region
+— a mode you cannot pan out of is a trap.
+
 ## Positioning and registration
 
 **Transform** moves a layer to the origin: pick which corner of the
