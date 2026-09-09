@@ -12,10 +12,14 @@ time, which is the one thing FlatCAM cannot do.
 
 ## Highlights
 
-**The graph is the document.** Operations are listed in dependency order, so
-you read a project top to bottom. Rename one in place with F2 or a
-double-click, and untick it to drop it out of the view without removing it or
-anything downstream of it.
+**The graph is the document.** Operations nest under whatever feeds them, so a
+project reads as the pipeline it is: copper branching into isolation and
+cutout, each ending in its own CNC job. Nesting follows the primary input, so
+every operation appears exactly once — a height map feeding three jobs is a
+root of its own and each job names it alongside, because the graph is a DAG
+and duplicating a shared node would be a lie about the structure. Rename one in
+place with F2 or a double-click, and untick it to drop it out of the view
+without removing it or anything downstream.
 
 **The panel writes itself.** Each operation declares its parameters once as
 descriptors, and the form is generated from them — adding a parameter needs no

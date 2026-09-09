@@ -20,7 +20,8 @@ pytest.importorskip("PySide6")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import (QApplication,  # noqa: E402
+                               QTreeWidgetItemIterator)
 
 from aaltocam.gui.app import MainWindow  # noqa: E402
 
@@ -48,10 +49,14 @@ def add_node(window, op="load_gerber"):
 
 
 def row_for(window, node_id):
-    for row in range(window.node_list.count()):
-        item = window.node_list.item(row)
-        if item.data(Qt.UserRole) == node_id:
+    """The tree item for a node, found by walking the tree rather than by
+    index: the list is nested now, so there are no rows to count."""
+    iterator = QTreeWidgetItemIterator(window.node_list)
+    while iterator.value():
+        item = iterator.value()
+        if item.data(0, Qt.UserRole) == node_id:
             return item
+        iterator += 1
     raise AssertionError(f"no row for {node_id}")
 
 
@@ -59,23 +64,23 @@ def row_for(window, node_id):
 
 def test_editing_the_row_renames_the_node(window):
     node = add_node(window)
-    row_for(window, node.id).setText("Top copper")
+    row_for(window, node.id).setText(0, "Top copper")
     assert window.doc.nodes[node.id].name == "Top copper"
 
 
 def test_a_blank_name_falls_back_to_the_id(window):
     node = add_node(window)
     item = row_for(window, node.id)
-    item.setText("   ")
+    item.setText(0, "   ")
     assert window.doc.nodes[node.id].name == node.id
     # The row must show the fallback, not the blank the user typed.
-    assert item.text() == node.id
+    assert item.text(0) == node.id
 
 
 def test_renaming_is_undoable(window):
     node = add_node(window)
     original = node.name
-    row_for(window, node.id).setText("Isolation pass")
+    row_for(window, node.id).setText(0, "Isolation pass")
     assert window.doc.nodes[node.id].name == "Isolation pass"
     window.undo()
     assert window.doc.nodes[node.id].name == original
@@ -87,17 +92,17 @@ def test_unchecking_still_hides_without_renaming(window):
     node = add_node(window)
     item = row_for(window, node.id)
     before = window.doc.nodes[node.id].name
-    item.setCheckState(Qt.Unchecked)
+    item.setCheckState(0, Qt.Unchecked)
     assert window.doc.nodes[node.id].visible is False
     assert window.doc.nodes[node.id].name == before
-    item.setCheckState(Qt.Checked)
+    item.setCheckState(0, Qt.Checked)
     assert window.doc.nodes[node.id].visible is True
 
 
 def test_renaming_does_not_disturb_visibility(window):
     node = add_node(window)
-    row_for(window, node.id).setCheckState(Qt.Unchecked)
-    row_for(window, node.id).setText("Hidden thing")
+    row_for(window, node.id).setCheckState(0, Qt.Unchecked)
+    row_for(window, node.id).setText(0, "Hidden thing")
     assert window.doc.nodes[node.id].visible is False
 
 
@@ -107,7 +112,7 @@ def test_panel_rename_reaches_the_list(window):
     node = add_node(window)
     window._on_rename(node.id, "From the panel")
     assert window.doc.nodes[node.id].name == "From the panel"
-    assert row_for(window, node.id).text() == "From the panel"
+    assert row_for(window, node.id).text(0) == "From the panel"
 
 
 def test_unchanged_panel_name_is_not_an_undo_step(window):
@@ -131,6 +136,6 @@ def test_name_survives_save_and_load(window):
     from aaltocam.core.graph import Document
 
     node = add_node(window)
-    row_for(window, node.id).setText("Persisted name")
+    row_for(window, node.id).setText(0, "Persisted name")
     restored = Document.from_dict(window.doc.to_dict())
     assert restored.nodes[node.id].name == "Persisted name"

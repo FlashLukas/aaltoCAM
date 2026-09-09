@@ -23,13 +23,15 @@ from PySide6.QtWidgets import (
     QLabel,
     QRadioButton,
     QHBoxLayout,
-    QListWidget,
-    QListWidgetItem,
+    QHeaderView,
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
+    QStyledItemDelegate,
     QTabWidget,
     QToolButton,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -44,6 +46,20 @@ from .canvas import BoardView
 from .paramform import ParamForm
 
 RECOMPUTE_DELAY_MS = 180
+
+
+class _NameColumnOnly(QStyledItemDelegate):
+    """Editing renames, and only the name column is a name.
+
+    The second column notes which other operations feed this one. It is
+    derived, so letting it be typed into would offer an edit that silently
+    does nothing.
+    """
+
+    def createEditor(self, parent, option, index):
+        if index.column() != 0:
+            return None
+        return super().createEditor(parent, option, index)
 
 
 class MainWindow(QMainWindow):
@@ -98,13 +114,27 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(6, 6, 6, 6)
 
-        self.node_list = QListWidget()
-        # Double-click or F2 renames in place. Deliberately not SelectedClicked,
-        # which starts an edit on a plain click of the already-selected row.
+        self.node_list = QTreeWidget()
+        self.node_list.setColumnCount(2)
+        self.node_list.setHeaderHidden(True)
+        self.node_list.setIndentation(14)
+        self.node_list.setUniformRowHeights(True)
+        # Double-click renames rather than collapsing the branch. Expanding is
+        # still on the arrow, and everything starts expanded anyway.
+        self.node_list.setExpandsOnDoubleClick(False)
+        self.node_list.setItemDelegate(_NameColumnOnly(self.node_list))
+        # Not SelectedClicked, which starts an edit on a plain click of the row
+        # you already had selected.
         self.node_list.setEditTriggers(
             QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
+        header = self.node_list.header()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        # Interactive, not ResizeToContents, so _fit_note_column can cap it.
+        header.setSectionResizeMode(1, QHeaderView.Interactive)
         self.node_list.currentItemChanged.connect(self._on_select)
         self.node_list.itemChanged.connect(self._on_item_changed)
+        self._items: dict[str, QTreeWidgetItem] = {}
         layout.addWidget(self.node_list, 1)
 
         layout.addWidget(self._toolbox())
@@ -642,7 +672,7 @@ class MainWindow(QMainWindow):
         item = self.node_list.currentItem()
         if item is None:
             return None
-        return self.doc.nodes.get(item.data(Qt.UserRole))
+        return self.doc.nodes.get(item.data(0, Qt.UserRole))
 
     def add_node(self, op_name: str):
         operation = REGISTRY[op_name]
@@ -697,22 +727,108 @@ class MainWindow(QMainWindow):
         self.refresh_list()
         self.schedule()
 
+    def _secondary_note(self, node) -> tuple[str, str]:
+        """What feeds this node besides its primary input, as (short, full).
+
+        Those sources live elsewhere in the tree -- as roots, or under whatever
+        produced them -- so without saying so here the connection is invisible.
+
+        The short form is only the source's name: the slot label is usually the
+        same word as the node it points at, and a column reading "Height map:
+        Height map" earns its width twice over while squeezing the names that
+        are the actual content. The full form goes on the tooltip.
+        """
+        operation = node.operation()
+        names, full = [], []
+        for slot in range(1, len(node.inputs)):
+            source = node.inputs[slot]
+            if not source or source not in self.doc.nodes:
+                continue
+            label = (operation.slot_label(slot)
+                     if slot < len(operation.inputs) else f"Input {slot + 1}")
+            names.append(self.doc.nodes[source].name)
+            full.append(f"{label}: {self.doc.nodes[source].name}")
+        if not names:
+            return "", ""
+        return "+ " + ", ".join(names), "\n".join(full)
+
+    def _make_item(self, node_id, parent) -> QTreeWidgetItem:
+        node = self.doc.nodes[node_id]
+        item = QTreeWidgetItem(parent if parent is not None else self.node_list)
+        item.setText(0, node.name)
+        item.setData(0, Qt.UserRole, node_id)
+        item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsEditable)
+        item.setCheckState(0, Qt.Checked if node.visible else Qt.Unchecked)
+        note, full = self._secondary_note(node)
+        if note:
+            item.setText(1, note)
+            item.setToolTip(1, full)
+            item.setForeground(1, self.palette().color(
+                QPalette.Disabled, QPalette.WindowText))
+        self._items[node_id] = item
+        return item
+
     def refresh_list(self, select: str | None = None):
+        """Rebuild the operation tree.
+
+        Nesting follows the *primary* input, slot 0, so every node appears
+        exactly once. The graph is a DAG rather than a tree: a height map can
+        feed three CNC jobs and a region can mask two isolations. Nesting such
+        a node under each consumer would duplicate it, and choosing one
+        consumer would be arbitrary, so it stays where it belongs and the
+        consumers note it in their second column instead.
+        """
         self.node_list.blockSignals(True)
         self.node_list.clear()
+        self._items = {}
+
+        children: dict[str, list[str]] = {nid: [] for nid in self.doc.order}
+        roots: list[str] = []
         for node_id in self.doc.order:
-            node = self.doc.nodes[node_id]
-            item = QListWidgetItem(f"{node.name}")
-            item.setData(Qt.UserRole, node_id)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsEditable)
-            item.setCheckState(Qt.Checked if node.visible else Qt.Unchecked)
-            self.node_list.addItem(item)
+            inputs = self.doc.nodes[node_id].inputs
+            parent = inputs[0] if inputs else ""
+            # A node whose primary input is empty or dangling is a root, which
+            # is also how a half-wired operation makes itself obvious.
+            if parent and parent in children:
+                children[parent].append(node_id)
+            else:
+                roots.append(node_id)
+
+        placed: set[str] = set()
+
+        def place(node_id, parent_item):
+            if node_id in placed:
+                return
+            placed.add(node_id)
+            item = self._make_item(node_id, parent_item)
+            for child in children[node_id]:
+                place(child, item)
+
+        for node_id in roots:
+            place(node_id, None)
+        # A cycle leaves nodes unreachable from any root. They should still be
+        # listed -- being unable to see an operation is worse than seeing it in
+        # the wrong place.
+        for node_id in self.doc.order:
+            place(node_id, None)
+
+        self.node_list.expandAll()
         self.node_list.blockSignals(False)
-        if select:
-            for row in range(self.node_list.count()):
-                if self.node_list.item(row).data(Qt.UserRole) == select:
-                    self.node_list.setCurrentRow(row)
-                    break
+        self._fit_note_column()
+        if select and select in self._items:
+            self.node_list.setCurrentItem(self._items[select])
+
+    def _fit_note_column(self):
+        """Size the note column to its contents, but never past a third.
+
+        Left to itself the note takes whatever it wants and the names -- which
+        are the thing being read, and the thing being renamed -- get elided to
+        make room for a derived hint.
+        """
+        self.node_list.resizeColumnToContents(1)
+        limit = max(48, int(self.node_list.viewport().width() / 3))
+        if self.node_list.columnWidth(1) > limit:
+            self.node_list.setColumnWidth(1, limit)
 
     def _on_select(self, current, _previous):
         node = self.current_node()
@@ -727,32 +843,47 @@ class MainWindow(QMainWindow):
             self.gcode_view.setPlainText(result.data)
         self._show_stats(node)
 
-    def _on_item_changed(self, item):
+    def _on_item_changed(self, item, _column=0):
         # One signal covers two edits: the checkbox toggles visibility, and an
         # in-place edit of the row renames the node.
-        node = self.doc.nodes.get(item.data(Qt.UserRole))
+        node = self.doc.nodes.get(item.data(0, Qt.UserRole))
         if node is None:
             return
 
-        text = item.text().strip()
+        text = item.text(0).strip()
         if text != node.name:
             self.push_undo()
             self._apply_name(node, text)
             # refresh_list would delete the very item whose signal this is, so
             # correct the one row instead, and only when a blank name fell back
             # to the id.
-            if item.text() != node.name:
+            if item.text(0) != node.name:
                 self.node_list.blockSignals(True)
-                item.setText(node.name)
+                item.setText(0, node.name)
                 self.node_list.blockSignals(False)
+            # A rename shows up in whatever reads this node as a secondary
+            # input, so those rows have to be refreshed too.
+            self._refresh_secondary_notes()
             if self.current_node() is node:
                 self.form.show_node(self.doc, node)
             return
 
-        visible = item.checkState() == Qt.Checked
+        visible = item.checkState(0) == Qt.Checked
         if visible != node.visible:
             node.visible = visible
             self.redraw()
+
+    def _refresh_secondary_notes(self):
+        """Re-derive the second column without rebuilding the tree."""
+        self.node_list.blockSignals(True)
+        for node_id, item in self._items.items():
+            node = self.doc.nodes.get(node_id)
+            if node is not None:
+                note, full = self._secondary_note(node)
+                item.setText(1, note)
+                item.setToolTip(1, full)
+        self.node_list.blockSignals(False)
+        self._fit_note_column()
 
     def _on_param_changed(self, node_id, name, value):
         node = self.doc.nodes[node_id]
@@ -832,6 +963,9 @@ class MainWindow(QMainWindow):
             node.inputs.append("")
         node.inputs[slot] = source_id
         self.doc.invalidate(node_id)
+        # Rewiring is what the tree is drawing, so the shape has to follow:
+        # slot 0 moves the branch, a later slot changes the note beside it.
+        self.refresh_list(select=node_id)
         self.schedule()
 
     def _apply_name(self, node, name):
@@ -855,7 +989,7 @@ class MainWindow(QMainWindow):
         item = self.node_list.currentItem()
         if item is not None:
             self.node_list.setFocus()
-            self.node_list.editItem(item)
+            self.node_list.editItem(item, 0)
 
     def _show_cursor(self, x, y):
         # While measuring, the points carry their own labels and the reading
