@@ -11,6 +11,7 @@ from PySide6.QtCore import QUrl
 from PySide6.QtGui import (QAction, QColor, QDesktopServices, QFont,
                            QKeySequence, QPalette)
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QDialog,
@@ -98,6 +99,10 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(6, 6, 6, 6)
 
         self.node_list = QListWidget()
+        # Double-click or F2 renames in place. Deliberately not SelectedClicked,
+        # which starts an edit on a plain click of the already-selected row.
+        self.node_list.setEditTriggers(
+            QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
         self.node_list.currentItemChanged.connect(self._on_select)
         self.node_list.itemChanged.connect(self._on_item_changed)
         layout.addWidget(self.node_list, 1)
@@ -259,8 +264,13 @@ class MainWindow(QMainWindow):
         redo = QAction("Redo", self)
         redo.setShortcut(QKeySequence.Redo)
         redo.triggered.connect(self.redo)
+        rename = QAction("Rename operation", self)
+        rename.setShortcut("F2")
+        rename.triggered.connect(self.rename_current)
         edit_menu.addAction(undo)
         edit_menu.addAction(redo)
+        edit_menu.addSeparator()
+        edit_menu.addAction(rename)
 
         tools_menu = self.menuBar().addMenu("&Tools")
         edit_tools = QAction("Edit tool library...", self)
@@ -694,7 +704,7 @@ class MainWindow(QMainWindow):
             node = self.doc.nodes[node_id]
             item = QListWidgetItem(f"{node.name}")
             item.setData(Qt.UserRole, node_id)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsEditable)
             item.setCheckState(Qt.Checked if node.visible else Qt.Unchecked)
             self.node_list.addItem(item)
         self.node_list.blockSignals(False)
@@ -718,11 +728,31 @@ class MainWindow(QMainWindow):
         self._show_stats(node)
 
     def _on_item_changed(self, item):
+        # One signal covers two edits: the checkbox toggles visibility, and an
+        # in-place edit of the row renames the node.
         node = self.doc.nodes.get(item.data(Qt.UserRole))
         if node is None:
             return
-        node.visible = item.checkState() == Qt.Checked
-        self.redraw()
+
+        text = item.text().strip()
+        if text != node.name:
+            self.push_undo()
+            self._apply_name(node, text)
+            # refresh_list would delete the very item whose signal this is, so
+            # correct the one row instead, and only when a blank name fell back
+            # to the id.
+            if item.text() != node.name:
+                self.node_list.blockSignals(True)
+                item.setText(node.name)
+                self.node_list.blockSignals(False)
+            if self.current_node() is node:
+                self.form.show_node(self.doc, node)
+            return
+
+        visible = item.checkState() == Qt.Checked
+        if visible != node.visible:
+            node.visible = visible
+            self.redraw()
 
     def _on_param_changed(self, node_id, name, value):
         node = self.doc.nodes[node_id]
@@ -804,9 +834,28 @@ class MainWindow(QMainWindow):
         self.doc.invalidate(node_id)
         self.schedule()
 
+    def _apply_name(self, node, name):
+        """A blank name leaves nothing to click on, so fall back to the id."""
+        node.name = name.strip() or node.id
+
     def _on_rename(self, node_id, name):
-        self.doc.nodes[node_id].name = name or node_id
+        node = self.doc.nodes.get(node_id)
+        if node is None:
+            return
+        # editingFinished fires on focus loss as well as on Enter, so without
+        # this every click away from the field lands another undo entry.
+        if (name.strip() or node.id) == node.name:
+            return
+        self.push_undo()
+        self._apply_name(node, name)
         self.refresh_list(select=node_id)
+
+    def rename_current(self):
+        """Start an in-place edit of the selected operation."""
+        item = self.node_list.currentItem()
+        if item is not None:
+            self.node_list.setFocus()
+            self.node_list.editItem(item)
 
     def _show_cursor(self, x, y):
         # While measuring, the points carry their own labels and the reading
