@@ -972,6 +972,11 @@ class MainWindow(QMainWindow):
             return
         meta = result.meta
         bits = []
+        if "summary" in meta:
+            # A height map's own description: shape, extent and Z span. Reading
+            # the span is how you notice a file of absolute heights loaded as
+            # though it held deviations.
+            bits.append(meta["summary"])
         if "tool_diameter" in meta:
             bits.append(f"cut width {meta['tool_diameter']:.3f} mm")
         if "cut_length" in meta:
@@ -1047,6 +1052,8 @@ class MainWindow(QMainWindow):
                                          result.meta.get("tool_diameter", 0.0))
             elif result.kind == "drills":
                 self.view.show_drills(node_id, result.data)
+            elif result.kind == "heightmap":
+                self.view.show_heightmap(node_id, result.data)
         # clear_all() removed the edit handles; put them back on top.
         self.view.refresh_handles()
 

@@ -128,7 +128,8 @@ any.
 | Mill holes | circular interpolation for holes at or above a size threshold |
 | Transform | move to origin, mirror, rotate, offset, scale — works on any payload, with an optional shared reference |
 | Panelize | rows, columns, spacing |
-| CNC job | depth, feeds, multi-depth passes, postprocessor choice |
+| Height map | probed X Y Z points, bilinear across a grid, nearest edge held outside it |
+| CNC job | depth, feeds, multi-depth passes, postprocessor choice, optional surface compensation |
 
 Postprocessors: `grbl`, `linuxcnc`, `generic`, `wegstr`.
 
@@ -460,10 +461,53 @@ the same via is under the same drill.
 
 ## Height compensation
 
-Nothing here modulates Z along a cut. If your controller runs its own
-surface compensation — Wegstr, bCNC autolevel, a Candle height map — that
-stays correct. Compensating twice is a real hazard, so height mapping is
-deliberately absent rather than optional.
+Copper-clad board is never flat, and an isolation pass 0.1 mm deep cuts air
+over a high spot and through the substrate over a low one. Connect a **Height
+map** to the second input of a CNC job and Z follows the probed surface.
+
+![A probed surface under the demo board](docs/screenshots/heightmap.png)
+
+The map is any text file with three numbers to a line -- X, Y and Z --
+separated by spaces, tabs, commas or semicolons. bCNC `.probe` files load as
+they are, header included. A comma is read as a decimal mark when that is the
+only reading that yields three numbers, so `1,5 2,5 0,05` is three points'
+worth of nothing surprising.
+
+**Zero** on the map says what counts as no correction. `raw` adds the reading
+as it stands, which is right for a file of deviations about zero; `mean` and
+`origin` subtract the average or the reading at X0 Y0, for files holding
+absolute heights. The status bar shows the map's Z span, which is how you
+notice having chosen wrong before cutting.
+
+Between probed points a full rectangular grid is interpolated bilinearly, and
+scattered points fall back to inverse-distance weighting over the nearest four.
+**Outside the probed area the nearest edge value is held**, never extrapolated:
+past the measurements a warped surface can only be guessed at, and holding the
+edge is wrong by a bounded amount rather than an unbounded one.
+
+Two parameters on the job decide what reaches the file:
+
+- **Sample spacing** splits long cuts before sampling. Correcting only at the
+  ends of a 20 mm move leaves its middle uncompensated, which is exactly where
+  a bowed board deviates most. 1 mm is a reasonable default.
+- **Write Z when it moves** drops Z words that would barely move the axis. The
+  comparison is against the last Z actually *written*, not the last computed,
+  so a slow ramp cannot creep away one sub-threshold step at a time. On the
+  demo board at 0.005 mm, 210 of 1112 cut moves carry a Z word and the rest
+  inherit it.
+
+Arc fitting is switched off for a compensated job, and the job says so rather
+than doing it quietly. An arc holds Z across its whole sweep, so a compensated
+G02 is correct at its two ends and wrong everywhere between them.
+
+**If the controller levels for itself, do not also do it here.** Wegstr does. A
+Wegstr job with a height map attached refuses to generate rather than
+compensating twice and doubling the very error it is meant to remove. Switch
+the machine's own levelling off and tick **Compensate anyway** if you mean it.
+
+Drilling jobs ignore a height map and say so: a drill goes through the board,
+so the surface height changes where the hole starts, not whether it finishes.
+Milled holes arrive as toolpaths and are compensated like any other cut.
 
 ## What is not here
 

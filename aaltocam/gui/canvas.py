@@ -31,6 +31,26 @@ MEASURE = QColor("#F2C14E")
 MEASURE_DIM = QColor(242, 193, 78, 120)
 LABEL_BG = QColor(9, 12, 16, 216)
 
+# Height map: a diverging pair, because what matters is which side of the
+# reference a point sits on, not just how far. Neither end is red or green.
+HEIGHT_LOW = QColor("#4F8FE3")    # below the reference
+HEIGHT_HIGH = QColor("#E39A4F")   # above it
+HEIGHT_ZERO = QColor("#59626E")   # flat, and close enough to the board to fade
+HEIGHT_EDGE = QColor("#7C8794")   # the probed boundary, beyond which Z is held
+
+
+def _height_colour(value: float) -> QColor:
+    """Map a deviation in -1..1 onto the diverging ramp."""
+    value = max(-1.0, min(1.0, value))
+    end = HEIGHT_HIGH if value >= 0 else HEIGHT_LOW
+    t = abs(value)
+    return QColor(
+        round(HEIGHT_ZERO.red() + (end.red() - HEIGHT_ZERO.red()) * t),
+        round(HEIGHT_ZERO.green() + (end.green() - HEIGHT_ZERO.green()) * t),
+        round(HEIGHT_ZERO.blue() + (end.blue() - HEIGHT_ZERO.blue()) * t),
+        210,
+    )
+
 
 class BoardView(QGraphicsView):
     cursor_moved = Signal(float, float)
@@ -392,6 +412,54 @@ class BoardView(QGraphicsView):
         pen.setCosmetic(True)
         pen.setWidthF(1.6)
         self._add(node_id, path, pen, QBrush(ALERT_FILL), z=8)
+
+    def show_heightmap(self, node_id, hm):
+        """Probed points as a diverging field, with the probed boundary marked.
+
+        Diverging rather than sequential because the quantity of interest is
+        deviation from flat and its sign matters: blue below the reference,
+        amber above, and anything near zero fading toward the board so a flat
+        map disappears instead of shouting.
+
+        A grid is drawn as swatches slightly larger than the sample spacing, so
+        it reads as the continuous field it is interpolated into. Scattered
+        points stay discrete dots, because between them there is nothing but a
+        guess and the picture should not pretend otherwise.
+        """
+        low, high = hm.z_range()
+        extent = max(abs(low), abs(high), 1e-6)
+
+        if hm.regular and len(hm.xs) > 1 and len(hm.ys) > 1:
+            # Each axis gets its own half-width. One shared size makes a grid
+            # with unequal spacing band along the coarser axis.
+            wx = max((hm.xs[-1] - hm.xs[0]) / (len(hm.xs) - 1) * 0.5, 1e-3)
+            wy = max((hm.ys[-1] - hm.ys[0]) / (len(hm.ys) - 1) * 0.5, 1e-3)
+            square = True
+        else:
+            x0, y0, x1, y1 = hm.bounds()
+            wx = wy = max(max(x1 - x0, y1 - y0) / 40.0, 0.2)
+            square = False
+
+        for x, y, z in hm.points:
+            path = QPainterPath()
+            if square:
+                path.addRect(QRectF(x - wx, y - wy, wx * 2, wy * 2))
+            else:
+                path.addEllipse(QPointF(x, y), wx, wy)
+            colour = _height_colour((z - hm.offset) / extent)
+            pen = QPen(colour.lighter(130))
+            pen.setCosmetic(True)
+            pen.setWidthF(0.8)
+            self._add(node_id, path, pen, QBrush(colour), z=-0.5)
+
+        x0, y0, x1, y1 = hm.bounds()
+        frame = QPainterPath()
+        frame.addRect(QRectF(x0, y0, x1 - x0, y1 - y0))
+        edge = QPen(HEIGHT_EDGE)
+        edge.setCosmetic(True)
+        edge.setWidthF(1.0)
+        edge.setStyle(Qt.DashLine)
+        self._add(node_id, frame, edge, None, z=-0.4)
 
     def show_drills(self, node_id, hits):
         path = QPainterPath()

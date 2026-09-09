@@ -150,6 +150,21 @@ def _excellon(p, ink, accent):
         p.drawEllipse(QPointF(x, 50), r, r)
 
 
+def _heightmap(p, ink, accent):
+    """A row of probe points under the bowed surface they measured."""
+    _pen(p, ink, 6)
+    p.drawRoundedRect(QRectF(14, 22, 72, 56), 8, 8)
+    _pen(p, accent, 5)
+    surface = QPainterPath()
+    surface.moveTo(24, 44)
+    surface.cubicTo(44, 66, 60, 30, 76, 50)
+    p.drawPath(surface)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QBrush(ink))
+    for x in (24, 41, 59, 76):
+        p.drawEllipse(QPointF(x, 66), 4, 4)
+
+
 def _region(p, ink, accent):
     _pen(p, accent, 6, Qt.DashLine)
     p.drawRect(QRectF(18, 24, 64, 52))
@@ -269,6 +284,7 @@ def _cnc_job(p, ink, accent):
 GLYPHS = {
     "load_gerber": _gerber,
     "load_excellon": _excellon,
+    "load_heightmap": _heightmap,
     "region": _region,
     "isolate": _isolate,
     "clear_copper": _clear,

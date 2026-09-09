@@ -8,9 +8,12 @@ All output is metric and absolute. Dialects that declare `supports_arcs` are
 given G02/G03 for runs that fit a circle; the rest get line segments only, so
 adding a dialect never means implementing arcs.
 
-Note on height compensation: nothing here modulates Z along a cut. If your
-controller applies its own surface compensation (Wegstr, bCNC autolevel,
-Candle height map), that stays correct. Compensating twice is a real hazard.
+Note on height compensation: Z is flat along a cut unless a height map is
+passed to `paths_to_gcode`, and then it follows the probed surface. Doing this
+when the controller already compensates -- Wegstr, bCNC autolevel, a Candle
+height map -- applies the correction twice and doubles the error, so a dialect
+that levels for itself refuses unless the caller says otherwise in as many
+words.
 
 A dialect may also describe the machine behind it -- a feed ceiling, a rapid
 rate, a travel envelope, how many decimals are worth writing. Those are used to
@@ -23,6 +26,7 @@ import math
 from dataclasses import dataclass, field, replace
 
 from . import arcfit
+from . import heightmap
 
 
 @dataclass
@@ -61,6 +65,9 @@ class Postprocessor:
     commands_spindle = True
     #: Whether the controller takes G02/G03 with I/J in the XY plane.
     supports_arcs = False
+    #: True when the machine's own software levels to a probed surface. A
+    #: compensated file sent to one of these is corrected twice.
+    self_levelling = False
     #: Radius bounds for an emitted arc, mm.
     min_arc_radius = 0.05
     max_arc_radius = 1000.0
@@ -162,10 +169,18 @@ class Postprocessor:
         self.track(z=z)
         self.emit(f"G1 Z{self.n(z)} F{self.n(self.feed(self.p.feed_z))}")
 
-    def cut(self, x, y):
-        self.track(x=x, y=y)
+    def cut(self, x, y, z=None):
+        """Feed move. A z of None leaves the axis where it already is.
+
+        Compensation writes Z only where it has actually moved, so most cuts
+        stay two words wide even on a mapped job.
+        """
+        self.track(x=x, y=y, z=z)
         self._pos = (x, y)
-        self.emit(f"G1 X{self.n(x)} Y{self.n(y)}")
+        if z is None:
+            self.emit(f"G1 X{self.n(x)} Y{self.n(y)}")
+        else:
+            self.emit(f"G1 X{self.n(x)} Y{self.n(y)} Z{self.n(z)}")
 
     def arc(self, x, y, cx, cy, clockwise):
         """Circular move to (x, y) about absolute centre (cx, cy).
@@ -258,12 +273,15 @@ class WegstrPost(Postprocessor):
     The machine runs at most 170 mm/min, and rapids are no faster -- G00 and G01
     share the ceiling. One step is 0.004 mm, so a fourth decimal is noise.
 
-    Z stays flat: the Wegstr software applies its own surface compensation, and
-    a height-mapped file would be compensated twice.
+    The Wegstr software applies its own surface compensation, so this dialect
+    declares itself self-levelling and refuses a height map: the correction
+    would otherwise be applied twice and double the error it exists to remove.
     """
 
     name = "wegstr"
     description = "Wegstr CNC. 170 mm/min ceiling, M06 + M00 tool change, flat Z."
+
+    self_levelling = True
 
     decimals = 3
     max_feed = 170.0
@@ -322,10 +340,13 @@ class WegstrPost(Postprocessor):
         self.track(z=z)
         self.emit(f"G01 Z{self.n(z)} F{self.n(self.feed(self.p.feed_z))}")
 
-    def cut(self, x, y):
-        self.track(x=x, y=y)
+    def cut(self, x, y, z=None):
+        self.track(x=x, y=y, z=z)
         self._pos = (x, y)
-        self.emit(f"G01 X{self.n(x)} Y{self.n(y)}")
+        if z is None:
+            self.emit(f"G01 X{self.n(x)} Y{self.n(y)}")
+        else:
+            self.emit(f"G01 X{self.n(x)} Y{self.n(y)} Z{self.n(z)}")
 
     def arc(self, x, y, cx, cy, clockwise):
         i, j = cx - self._pos[0], cy - self._pos[1]
@@ -393,8 +414,16 @@ def apply_tool(p: JobParams, tool) -> JobParams:
     return replace(p, **changes)
 
 
-def _emit_path(post, coords, arc_tolerance):
+def _emit_path(post, coords, arc_tolerance, hm=None, base_z=0.0,
+               segment=1.0, z_tolerance=0.0):
     """Cut along one polyline, as arcs where the dialect and the shape allow."""
+    if hm is not None:
+        # No arcs here, and not by oversight: a G02/G03 holds Z across its whole
+        # sweep, so a compensated arc is right at its two ends and wrong in the
+        # middle. The caller has already forced arc fitting off.
+        for x, y, z in heightmap.compensate(coords, hm, base_z, segment, z_tolerance):
+            post.cut(x, y, z)
+        return
     if not (arc_tolerance > 0 and post.supports_arcs):
         for x, y in coords[1:]:
             post.cut(x, y)
@@ -411,7 +440,9 @@ def _emit_path(post, coords, arc_tolerance):
 
 def paths_to_gcode(paths, p: JobParams, dialect: str = "grbl", meta: dict | None = None,
                    groups=None, warnings: list[str] | None = None,
-                   tool_lookup=None, arc_tolerance: float = 0.0) -> str:
+                   tool_lookup=None, arc_tolerance: float = 0.0,
+                   hm=None, segment: float = 1.0, z_tolerance: float = 0.0,
+                   allow_double_levelling: bool = False) -> str:
     """Turn ordered LineStrings into G-code.
 
     `groups` is an optional list of (tool_diameter, paths) from a rest-machining
@@ -429,6 +460,25 @@ def paths_to_gcode(paths, p: JobParams, dialect: str = "grbl", meta: dict | None
     """
     post = POSTPROCESSORS.get(dialect, Postprocessor)(p)
     base = p
+
+    if hm is not None:
+        if post.self_levelling and not allow_double_levelling:
+            raise ValueError(
+                f"The {post.name} controller applies its own surface compensation, "
+                f"so a height map here would be applied twice and double the error. "
+                f"Turn the machine's levelling off and tick 'compensate anyway', "
+                f"or drop the height map from this job."
+            )
+        if arc_tolerance > 0:
+            # Silently emitting arcs at one Z would look like it worked.
+            post.warnings.append(
+                "Arc fitting is off for this job: an arc holds Z across its "
+                "sweep, so it cannot follow a probed surface.")
+            arc_tolerance = 0.0
+        if post.self_levelling:
+            post.warnings.append(
+                f"Compensating a {post.name} job by hand. The machine must have "
+                f"its own surface levelling switched off.")
 
     batches = groups if groups else [(p.tool_diameter, paths)]
     first_tool = tool_lookup(batches[0][0]) if (tool_lookup and batches) else None
@@ -452,9 +502,12 @@ def paths_to_gcode(paths, p: JobParams, dialect: str = "grbl", meta: dict | None
                 continue
             for z in _depth_steps(post.p):
                 post.rapid(coords[0][0], coords[0][1])
-                post.plunge(z)
+                # Each depth pass is compensated in its own right: the surface
+                # is just as uneven on the second pass as on the first.
+                post.plunge(heightmap.start_z(hm, z, coords[0]) if hm else z)
                 post.feed_move()
-                _emit_path(post, coords, arc_tolerance)
+                _emit_path(post, coords, arc_tolerance, hm, z,
+                           segment, z_tolerance)
                 post.rapid_z(post.p.travel_z)
 
     post.p = base

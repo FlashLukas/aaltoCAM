@@ -16,6 +16,7 @@ from shapely.ops import unary_union
 
 from . import gcode as gc
 from . import geometry as geo
+from . import heightmap as hmap
 from . import tools as toollib
 from .graph import Payload, register
 from .params import B, C, F, I, P, S, SH, T, normalize_shapes, normalize_tools
@@ -185,6 +186,42 @@ def op_load_excellon(doc, node):
     return Payload("drills", hits, {"source": os.path.basename(path), "slots": slots})
 
 
+@register(
+    "load_heightmap", "Height map",
+    [P("path", "File", "", help="Probed X Y Z points: any text file with three "
+                                "numbers per line."),
+     C("zero", "Zero", "raw", ["raw", "mean", "origin"],
+       help="What counts as no correction. 'raw' adds the probed Z as it "
+            "stands, which is right for a file of deviations about zero. "
+            "'mean' subtracts the average and 'origin' the reading at X0 Y0 -- "
+            "use one of those when the file holds absolute heights."),
+     F("scale", "Scale", 1.0, minimum=-10, maximum=10, step=0.1, decimals=3,
+       help="Multiplies every reading. -1 flips a map probed with the "
+            "opposite sign convention.")],
+    inputs=[], output="heightmap", category="Source",
+)
+def op_load_heightmap(doc, node):
+    path = _resolve(doc, node.params["path"])
+    if not path or not os.path.exists(path):
+        raise FileNotFoundError(
+            f"Height map not found: {path or '(no file selected)'}")
+    zero = str(node.params.get("zero", "raw"))
+    hm, notes = hmap.load(path, zero=zero)
+    scale = float(node.params.get("scale", 1.0))
+    if scale != 1.0:
+        # Rebuild rather than mutate, so the zero offset is recomputed from the
+        # scaled readings instead of being scaled along with them.
+        hm = hmap.HeightMap.from_points(
+            [(x, y, z * scale) for x, y, z in hm.points], zero=zero)
+    return Payload("heightmap", hm, {
+        "source": os.path.basename(path),
+        "notes": notes,
+        "summary": hm.describe(),
+        "regular": hm.regular,
+        "points": len(hm.points),
+    })
+
+
 # --------------------------------------------------------------------------
 # Transforms (work on any payload kind)
 # --------------------------------------------------------------------------
@@ -279,6 +316,8 @@ def payload_bounds(payload: Payload):
         if not payload.data:
             return None
         return unary_union(payload.data).bounds
+    if payload.kind == "heightmap":
+        return payload.data.bounds()
     if payload.kind == "drills":
         if not payload.data:
             return None
@@ -974,16 +1013,34 @@ def op_clearance_check(doc, node, copper: Payload):
        step=0.001, decimals=4, group="Output",
        help="Refit circular runs as G02/G03 within this deviation, on dialects "
             "that support arcs. Zero writes line segments only."),
+     F("z_tolerance", "Write Z when it moves", 0.005, unit="mm", minimum=0.0,
+       maximum=1.0, step=0.001, decimals=4, group="Height compensation",
+       help="Only write a Z word once the compensated depth has moved this far "
+            "from the last one written. Zero writes Z at every sample."),
+     F("segment", "Sample spacing", 1.0, unit="mm", minimum=0.05, maximum=20.0,
+       step=0.5, decimals=2, group="Height compensation",
+       help="Long cuts are split this finely before the surface is sampled. "
+            "Correcting only at the ends of a long move leaves its middle "
+            "uncompensated, which is where a bowed board deviates most."),
+     B("allow_double_levelling", "Compensate anyway", False,
+       group="Height compensation",
+       help="Machines that level to their own probe -- Wegstr among them -- "
+            "refuse a compensated file, because the correction would be "
+            "applied twice. Tick this only with the machine's own levelling "
+            "switched off."),
      F("toolchange_z", "Tool change Z", 20.0, unit="mm", minimum=0, maximum=200, step=1,
        group="Output"),
      I("tool_number", "Tool number", 1, minimum=1, maximum=99, group="Output"),
      S("start_code", "Start G-code", "", group="Output"),
      S("end_code", "End G-code", "", group="Output")],
-    inputs=["any"], output="gcode", category="Output",
+    inputs=["any", "?heightmap"], output="gcode", category="Output",
+    input_labels=["Input", "Height map"],
 )
-def op_cnc_job(doc, node, source: Payload):
+def op_cnc_job(doc, node, source: Payload, height: Payload = None):
     if source.kind not in ("paths", "drills"):
         raise TypeError("CNC job needs toolpaths or drills as input")
+    if height is not None and height.kind != "heightmap":
+        raise TypeError("The second input of a CNC job must be a height map")
 
     params = gc.JobParams(
         cut_z=float(node.params["cut_z"]),
@@ -1027,12 +1084,24 @@ def op_cnc_job(doc, node, source: Payload):
     if source.kind == "paths":
         text = gc.paths_to_gcode(source.data, params, dialect, meta, groups=groups,
                                  warnings=warnings, tool_lookup=lookup,
-                                 arc_tolerance=arc_tolerance)
+                                 arc_tolerance=arc_tolerance,
+                                 hm=height.data if height is not None else None,
+                                 segment=float(node.params.get("segment", 1.0)),
+                                 z_tolerance=float(node.params.get("z_tolerance", 0.0)),
+                                 allow_double_levelling=bool(
+                                     node.params.get("allow_double_levelling", False)))
         stats = {
             "cut_length": source.meta.get("cut_length", geo.cut_length(source.data)),
             "travel_length": source.meta.get("travel_length", geo.travel_length(source.data)),
         }
     else:
+        if height is not None:
+            # Drilling goes through the board, so the surface height changes
+            # where the hole starts, not whether it is finished. Milled holes
+            # arrive here as paths and are compensated like any other cut.
+            warnings.append(
+                "Height map ignored: a drilling job goes through the board. "
+                "Use hole milling if the depth matters.")
         text = gc.drills_to_gcode(source.data, params, dialect, meta, warnings=warnings,
                                   tool_lookup=lookup)
         stats = {"holes": len(source.data)}
