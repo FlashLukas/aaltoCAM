@@ -26,6 +26,8 @@ class Param:
     help: str = ""
     group: str = ""
     # Name of another parameter whose value enables this one, e.g. "multidepth".
+    # "name:value" requires that exact value; a leading "!" inverts the rule,
+    # so "!tool" means "editable only while no tool is chosen".
     depends_on: str | None = None
 
     def coerce(self, value):

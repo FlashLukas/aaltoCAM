@@ -132,6 +132,12 @@ overrides). It is shared by every project, because the same cutters get used
 across boards. **Tools → Edit tool library** opens it, **Reload tool library**
 (Ctrl+Shift+T) picks up your changes.
 
+Choosing a tool fills in the fields it governs -- diameter, shape, and on a CNC
+job the feeds and depth -- and greys them out, so what you read is what will be
+cut. A CNC job that inherits its tool from the geometry above it picks the
+numbers up as soon as that geometry evaluates. Clear the tool to type your own
+again; the numbers stay behind as a starting point.
+
 A tool carries its geometry and the feeds that have been shown to work with it.
 Geometry operations pick a tool instead of having its diameter typed into one
 node and its feeds into another, and the CNC job inherits the feeds from

@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..core import REGISTRY, Document
+from ..core import REGISTRY, Document, ops
 from ..core import discover
 from ..core import kicad
 from ..core import tools as toollib
@@ -602,6 +602,7 @@ class MainWindow(QMainWindow):
             self.form.clear()
             return
         self.form.show_node(self.doc, node)
+        self._grey_tool_fields(node)
         self._sync_editable(node)
         result = self.results.get(node.id)
         if hasattr(result, "kind") and result.kind == "gcode":
@@ -616,12 +617,75 @@ class MainWindow(QMainWindow):
         self.redraw()
 
     def _on_param_changed(self, node_id, name, value):
-        param = self.doc.nodes[node_id].operation().param(name)
+        node = self.doc.nodes[node_id]
+        param = node.operation().param(name)
         if param is not None:
             value = param.coerce(value)
         self.push_undo()
-        if self.doc.set_param(node_id, name, value):
+        changed = self.doc.set_param(node_id, name, value)
+
+        # Choosing a tool rewrites the fields it governs, so the form has to be
+        # rebuilt: updating one widget in place would leave the diameter beside
+        # it still showing the previous cutter.
+        if name in ("tool", "feeds_from_tool"):
+            if ops.sync_tool_params(node, self._effective_tool(node)):
+                self.doc.invalidate(node_id)
+                changed = True
+            self.form.show_node(self.doc, node)
+            self._grey_tool_fields(node)
+        if changed:
             self.schedule()
+
+    def _effective_tool(self, node):
+        """The cutter a node is actually working with.
+
+        A CNC job usually inherits it from the geometry upstream rather than
+        naming one itself, so look there when the node has no choice of its own.
+        """
+        own = ops.selected_tool(node)
+        if own is not None or node.op != "cnc_job":
+            return own
+        for source_id in node.inputs:
+            result = self.results.get(source_id)
+            if hasattr(result, "meta"):
+                found = toollib.get(str(result.meta.get("tool", "") or ""))
+                if found is not None:
+                    return found
+        return None
+
+    def _adopt_inherited_tools(self) -> bool:
+        """Copy each CNC job's inherited feeds into its own fields.
+
+        Without this the job would show one feed and write another as soon as
+        the tool was chosen on the isolation node rather than on the job.
+        """
+        touched = False
+        for node in list(self.doc.nodes.values()):
+            if node.op != "cnc_job" or not node.params.get("feeds_from_tool", True):
+                continue
+            tool = self._effective_tool(node)
+            if tool is None or not tool.has_feeds:
+                continue
+            if ops.sync_tool_params(node, tool):
+                self.doc.invalidate(node.id)
+                touched = True
+        if touched and self.form._node_id in self.doc.nodes:
+            self.form.show_node(self.doc, self.doc.nodes[self.form._node_id])
+            self._grey_tool_fields(self.doc.nodes[self.form._node_id])
+        return touched
+
+    def _grey_tool_fields(self, node):
+        """Feeds supplied by a tool are shown but not editable here.
+
+        The CNC job cannot express this with depends_on, because the tool it
+        obeys may have come down the graph rather than being chosen on the node.
+        """
+        if node is None or node.op != "cnc_job":
+            return
+        tool = self._effective_tool(node) if node.params.get("feeds_from_tool", True) else None
+        governed = tool is not None and tool.has_feeds
+        for name in ("feed_xy", "feed_z", "cut_z", "depth_per_pass", "multidepth", "spindle"):
+            self.form.set_enabled(name, not governed)
 
     def _on_input_changed(self, node_id, slot, source_id):
         self.push_undo()
@@ -693,6 +757,12 @@ class MainWindow(QMainWindow):
         QApplication.setOverrideCursor(Qt.BusyCursor)
         try:
             self.results = self.doc.evaluate_all()
+            # A CNC job usually learns its cutter from the geometry above it,
+            # which is only known once that geometry has been evaluated. Bring
+            # its fields into line and evaluate the affected jobs again; the
+            # sync is idempotent, so this settles in one extra pass.
+            if self._adopt_inherited_tools():
+                self.results = self.doc.evaluate_all()
         finally:
             QApplication.restoreOverrideCursor()
         elapsed = (time.perf_counter() - start) * 1000

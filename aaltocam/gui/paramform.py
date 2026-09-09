@@ -447,14 +447,24 @@ class ParamForm(QScrollArea):
             rule = getattr(param, "depends_on", None)
             if not rule:
                 continue
+            invert = rule.startswith("!")
+            rule = rule[1:] if invert else rule
             if ":" in rule:
                 other, expected = rule.split(":", 1)
                 active = str(self.value_of(other)) == expected
             else:
                 active = bool(self.value_of(rule))
+            if invert:
+                active = not active
             widget = self._widgets.get(name)
             if widget is not None:
                 widget.setEnabled(active)
+
+    def set_enabled(self, name: str, on: bool):
+        """Grey one field out for a reason the parameters cannot express."""
+        widget = self._widgets.get(name)
+        if widget is not None:
+            widget.setEnabled(on)
 
 
     def set_shapes(self, shapes) -> bool:

@@ -70,6 +70,51 @@ def _tool_dia(node, key: str = "tool_dia") -> float:
 # mutated in place on reload, so every descriptor keeps pointing at it.
 toollib.library()
 
+def sync_tool_params(node, tool=None) -> bool:
+    """Write a chosen tool's numbers into the node's own fields.
+
+    The tool is what evaluation uses, so the fields beside it have to agree or
+    they are just a lie on screen -- pick a 1 mm router and the diameter box
+    must stop saying 0.2. Called when the choice changes, never during
+    evaluation: node parameters feed the cache key, and mutating them mid-run
+    would poison it.
+
+    Returns True when something changed, so the caller knows to redraw.
+    """
+    tool = tool if tool is not None else selected_tool(node)
+    if tool is None:
+        return False
+
+    changed = False
+
+    def put(key, value):
+        nonlocal changed
+        if key in node.params and node.params[key] != value:
+            node.params[key] = value
+            changed = True
+
+    put("tool_dia", tool.diameter)
+    put("tool_shape", tool.shape)
+    if tool.tip_diameter:
+        put("tip_dia", tool.tip_diameter)
+    if tool.tip_angle:
+        put("tip_angle", tool.tip_angle)
+
+    if node.op == "cnc_job" and node.params.get("feeds_from_tool", True):
+        if tool.feed_xy > 0:
+            put("feed_xy", tool.feed_xy)
+        if tool.feed_z > 0:
+            put("feed_z", tool.feed_z)
+        if tool.cut_z < 0:
+            put("cut_z", tool.cut_z)
+        if tool.depth_per_pass > 0:
+            put("depth_per_pass", tool.depth_per_pass)
+            put("multidepth", True)
+        if tool.spindle_rpm > 0:
+            put("spindle", int(tool.spindle_rpm))
+    return changed
+
+
 TOOL_CHOICE = C("tool", "Tool", "", toollib.CHOICES, group="Tool",
                 help="Pick a cutter from the tool library. Its diameter replaces "
                      "the one typed here, and the CNC job can take its feeds.")
@@ -78,8 +123,10 @@ TOOL_CHOICE = C("tool", "Tool", "", toollib.CHOICES, group="Tool",
 TOOL_PARAMS = [
     TOOL_CHOICE,
     F("tool_dia", "Tool diameter", 0.2, unit="mm", minimum=0.001, maximum=20, group="Tool",
-      help="For a V-bit this is the maximum usable width."),
-    C("tool_shape", "Tool shape", "flat", ["flat", "v"], group="Tool"),
+      depends_on="!tool",
+      help="For a V-bit this is the maximum usable width. A chosen tool fills "
+           "this in and takes over; clear the tool to type your own."),
+    C("tool_shape", "Tool shape", "flat", ["flat", "v"], group="Tool", depends_on="!tool"),
     F("tip_dia", "V tip diameter", 0.02, unit="mm", minimum=0.0, maximum=2, step=0.01,
       group="Tool", depends_on="tool_shape:v"),
     F("tip_angle", "V tip angle", 30.0, unit="deg", minimum=1, maximum=180, step=1,
@@ -614,7 +661,8 @@ SIDE_PARAM = C(
 @register(
     "cutout", "Board cutout",
     [TOOL_CHOICE,
-     F("tool_dia", "Tool diameter", 1.0, unit="mm", minimum=0.05, maximum=10, group="Tool"),
+     F("tool_dia", "Tool diameter", 1.0, unit="mm", minimum=0.05, maximum=10, group="Tool",
+       depends_on="!tool"),
      C("shape", "Outline shape", "rectangle",
        ["rectangle", "hull", "outline input"], group="Cutout",
        help="'outline input' uses the connected Edge.Cuts layer or drawn region."),
@@ -658,7 +706,8 @@ def op_cutout(doc, node, copper: Payload, outline_input: Payload = None):
 @register(
     "internal_cutout", "Internal cutout",
     [TOOL_CHOICE,
-     F("tool_dia", "Tool diameter", 1.0, unit="mm", minimum=0.05, maximum=10, group="Tool"),
+     F("tool_dia", "Tool diameter", 1.0, unit="mm", minimum=0.05, maximum=10, group="Tool",
+       depends_on="!tool"),
      SIDE_PARAM,
      F("margin", "Margin", 0.0, unit="mm", minimum=-10, maximum=50, step=0.05,
        group="Cutout", help="Added in the compensation direction: positive makes "
@@ -758,7 +807,8 @@ def _circle_segments(radius: float) -> int:
 @register(
     "mill_holes", "Mill holes",
     [TOOL_CHOICE,
-     F("tool_dia", "Tool diameter", 0.8, unit="mm", minimum=0.05, maximum=10, group="Tool"),
+     F("tool_dia", "Tool diameter", 0.8, unit="mm", minimum=0.05, maximum=10, group="Tool",
+       depends_on="!tool"),
      F("mill_threshold", "Mill at or above", 2.0, unit="mm", minimum=0.05, maximum=30,
        step=0.1, group="Selection",
        help="Holes this size and larger are milled. Match the Drill holes threshold."),
