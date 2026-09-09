@@ -1,0 +1,95 @@
+name: Windows build
+
+# Tag pushes publish; manual runs just build and leave the zip as an artifact,
+# so the pipeline can be exercised without cutting a release.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      # Windows PowerShell 5.1, not pwsh, and deliberately so: 5.1 is what the
+      # target machine runs, and it is where install-aaltocam.ps1 has broken
+      # before in ways pwsh cannot reproduce. Building here keeps that honest.
+      - name: Build the standalone executable
+        shell: powershell
+        run: |
+          # GitHub sets this to 'stop', which makes a native command writing to
+          # stderr fatal -- and PyInstaller logs its whole progress to stderr.
+          $ErrorActionPreference = 'Continue'
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          & .\packaging\install-aaltocam.ps1 `
+              -Source $PWD.Path `
+              -Root "$env:RUNNER_TEMP\build" `
+              -BuildExe -NoShortcut
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path "$env:RUNNER_TEMP\build\dist\aaltocam\aaltocam.exe")) {
+              Write-Error "PyInstaller produced no executable"
+              exit 1
+          }
+
+      # Against the environment that was actually built and shipped, rather
+      # than a separate install of the same requirements.
+      - name: Run the test suite
+        shell: powershell
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $py = "$env:RUNNER_TEMP\build\.venv\Scripts\python.exe"
+          & $py -m pip install pytest --quiet
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:PYTHONPATH = $PWD.Path
+          & $py -m pytest tests/ -q
+          exit $LASTEXITCODE
+
+      - name: Assemble the release folder
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          python packaging\assemble-release.py `
+              --root "$env:RUNNER_TEMP\build" `
+              --out  "$env:RUNNER_TEMP\release"
+          exit $LASTEXITCODE
+
+      - name: Name the zip
+        id: zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          path=$(ls "$RUNNER_TEMP"/release/*.zip)
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$path")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.zip.outputs.name }}
+          path: ${{ steps.zip.outputs.path }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach to the release
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --title "aaltoCAM ${tag#v}" --generate-notes
+          fi
+          gh release upload "$tag" "${{ steps.zip.outputs.path }}" --clobber
