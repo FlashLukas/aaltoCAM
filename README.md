@@ -8,6 +8,31 @@ Change the tool diameter three days later and the isolation geometry, the
 travel ordering and the G-code all re-evaluate. Nothing is baked at creation
 time, which is the one thing FlatCAM cannot do.
 
+![The demo board with an isolation pass selected](docs/screenshots/board.png)
+
+## Highlights
+
+**The graph is the document.** Operations are listed in dependency order, so
+you read a project top to bottom. Rename one in place with F2 or a
+double-click, and untick it to drop it out of the view without removing it or
+anything downstream of it.
+
+**The panel writes itself.** Each operation declares its parameters once as
+descriptors, and the form is generated from them — adding a parameter needs no
+GUI code, and the panel cannot drift out of step with what the operation
+actually accepts.
+
+<p align="center">
+  <img src="docs/screenshots/operations.png" alt="The Operations list" width="228">
+  <img src="docs/screenshots/parameters.png" alt="The parameter panel" width="342">
+</p>
+
+**Read the G-code before you cut it.** The second tab is the output that will
+reach the machine, and the status bar carries the cutting distance, the travel
+distance and a time estimate while you are still deciding.
+
+![The G-code tab](docs/screenshots/gcode.png)
+
 ## Install
 
 ```
@@ -30,6 +55,13 @@ aaltocam examples/demo/demo.toml --list    # show the graph
 In the GUI: the palette under the operation list adds a node, the panel on
 the right edits it, the board view updates as you type. Ctrl+E exports the
 selected CNC job, Ctrl+Z and Ctrl+Shift+Z undo and redo.
+
+Operations are named after the operation that made them. Rename one by
+double-clicking it in the list, by pressing F2, or through the Name field at
+the top of the parameter panel — a board with `Top copper` and `Board cutout`
+in the list reads better than one with `Gerber file` and `Board cutout` a week
+later. Renaming is undoable like any other edit, and clearing the name puts
+back the node's id rather than leaving a blank row.
 
 The palette is a grid of icons grouped the way the operations are categorised
 — Source, CAM, Edit, Output — with the name and a one-line description on the
