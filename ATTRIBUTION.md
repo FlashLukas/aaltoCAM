@@ -107,7 +107,12 @@ arises. If it is published for other people to download, the licence texts of
 at least Qt, GEOS, gerbonara, Shapely and NumPy should travel with it, and it
 is worth a look from someone who does this for a living.
 
-aaltoCAM's own licence is not chosen yet — there is deliberately no `LICENSE`
-file. Note that gerbonara (Apache-2.0), Shapely (BSD-3) and NumPy (BSD-3) are
-all permissive and constrain nothing; Qt's LGPL is the term that shapes the
-options.
+aaltoCAM is licensed under the Apache License, Version 2.0. The text is in
+`LICENSE` and the attribution required by section 4(d) is in `NOTICE`.
+
+Apache-2.0 was chosen partly because the gerbonara-derived functions in
+`aaltocam/core/geometry.py` are already under it, so that notice obligation is
+carried by the project's own licence rather than bolted on beside it. gerbonara
+(Apache-2.0), Shapely (BSD-3) and NumPy (BSD-3) are permissive and constrain
+nothing further. Qt's LGPL, described above, shapes what may be done with the
+frozen executable rather than with this source.
