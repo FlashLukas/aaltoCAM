@@ -56,13 +56,18 @@ def classify(directory: str) -> dict:
     return found
 
 
-def build_board(directory: str, side: str = "top",
-                origin: bool = False) -> tuple[Document, list[str]]:
-    """Build a ready-to-cut graph from a plot folder.
+def build_board(directory: str, side: str = "top", origin: bool = False,
+                operations: bool = True) -> tuple[Document, list[str]]:
+    """Build a graph from a plot folder.
 
     Returns the document and a list of notes about what was and was not
     recognised, so the caller can say something useful instead of silently
     producing an empty project.
+
+    Built in three passes -- load every file, place every layer, then add the
+    CAM -- so the operation list opens with the files that were read, in the
+    order they were read, rather than burying the drill file halfway down
+    between two milling jobs.
 
     `origin` puts the board's bottom-left corner on X0 Y0, which is where a
     Gerber plotted on KiCad's absolute origin is least useful: it arrives
@@ -73,15 +78,19 @@ def build_board(directory: str, side: str = "top",
     outline where there is one. That shared reference is the point: measuring
     each layer against its own bounding box looks right on screen and drills
     through the wrong pads, because copper and drills have different extents.
+
+    `operations` off loads and places the files and stops there, for when you
+    want to look at a board rather than cut it.
     """
     found = classify(directory)
     notes: list[str] = []
     doc = Document()
     doc.base_dir = os.path.abspath(directory)
-    doc.source = {"side": side, "origin": bool(origin)}
+    doc.source = {"side": side, "origin": bool(origin),
+                  "operations": bool(operations)}
 
     wanted = found[side]
-    if wanted is None and found[side] is None:
+    if wanted is None:
         other = "bottom" if side == "top" else "top"
         wanted = found[other]
         if wanted is not None:
@@ -96,6 +105,8 @@ def build_board(directory: str, side: str = "top",
     def rel(path):
         return os.path.relpath(path, doc.base_dir)
 
+    # -- everything that reads a file -------------------------------------
+
     copper = doc.add("load_gerber", path=rel(copper_path),
                      name=os.path.basename(copper_path))
     notes.append(f"Copper: {os.path.basename(copper_path)}")
@@ -107,6 +118,18 @@ def build_board(directory: str, side: str = "top",
         outline_id = outline.id
         notes.append(f"Outline: {os.path.basename(found['outline'])}")
 
+    drills_source = ""
+    if found["drills"]:
+        drill_path = found["drills"][0]
+        drills_source = doc.add("load_excellon", path=rel(drill_path),
+                                name=os.path.basename(drill_path)).id
+        notes.append(f"Drills: {os.path.basename(drill_path)}")
+        if len(found["drills"]) > 1:
+            extra = ", ".join(os.path.basename(p) for p in found["drills"][1:])
+            notes.append(f"Other drill files not loaded: {extra}")
+
+    # -- where those layers sit -------------------------------------------
+
     flip = side == "bottom"
     # One shared reference for every layer, so they all move by the same delta.
     reference_id = outline_id or copper.id
@@ -114,7 +137,7 @@ def build_board(directory: str, side: str = "top",
 
     def placed(source_id: str, label: str) -> str:
         """Flip and/or zero one layer. Returns the layer itself when neither."""
-        if not (flip or origin):
+        if not (source_id and (flip or origin)):
             return source_id
         what = "Flip" if flip else "Zero"
         if flip and origin:
@@ -134,29 +157,33 @@ def build_board(directory: str, side: str = "top",
                      "so the board is turned over left to right.")
     if origin:
         notes.append(f"Moved to the origin: the bottom-left corner of {reference_name} "
-                     "is now X0 Y0, and every layer shifted with it.")
+                     "is now X0 Y0, and every layer shifted with it. The untouched "
+                     "layers are hidden, so the board is not drawn twice.")
 
     copper_id = placed(copper.id, "copper")
-    cut_outline_id = placed(outline_id, "outline") if outline_id else ""
+    cut_outline_id = placed(outline_id, "outline")
+    drills_id = placed(drills_source, "drills")
+
+    # -- what to do with them ---------------------------------------------
+
+    if not operations:
+        notes.append("Files loaded only. Add operations from the palette when "
+                     "you want toolpaths.")
+        if found["unknown"]:
+            notes.append("Not recognised: " +
+                         ", ".join(os.path.basename(p) for p in found["unknown"]))
+        return doc, notes
 
     isolate = doc.add("isolate", [copper_id], tool_shape="v", passes=2, name="Isolation")
     doc.add("cnc_job", [isolate.id], cut_z=-0.1, feed_xy=150, name="Isolation job")
 
-    if found["drills"]:
-        drill_path = found["drills"][0]
-        excellon = doc.add("load_excellon", path=rel(drill_path),
-                           name=os.path.basename(drill_path))
-        notes.append(f"Drills: {os.path.basename(drill_path)}")
-        drills_id = placed(excellon.id, "drills")
+    if drills_id:
         holes = doc.add("drill_holes", [drills_id], name="Small holes (drill)")
         doc.add("cnc_job", [holes.id], cut_z=-1.8, multidepth=True, depth_per_pass=0.6,
                 name="Drill job")
         milled = doc.add("mill_holes", [drills_id], tool_dia=0.8, name="Large holes (mill)")
         doc.add("cnc_job", [milled.id], cut_z=-1.8, multidepth=True, depth_per_pass=0.3,
                 feed_xy=150, name="Hole milling job")
-        if len(found["drills"]) > 1:
-            extra = ", ".join(os.path.basename(p) for p in found["drills"][1:])
-            notes.append(f"Other drill files not loaded: {extra}")
 
     cutout = doc.add("cutout", [copper_id, cut_outline_id], name="Board cutout",
                      shape="outline input" if cut_outline_id else "rectangle")

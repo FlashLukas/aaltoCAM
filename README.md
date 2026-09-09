@@ -350,9 +350,13 @@ both on (0, 0) and shift every hole by 0.3 mm.
 
 ## Where the board ends up
 
-Importing a board asks two things: which side, when there is copper on both,
-and whether to move it to the origin. Both are about the same question -- where
-the geometry lands -- so they share one dialog.
+Importing a board asks three things in one dialog: which side, when there is
+copper on both; whether to move it to the origin; and whether to add the usual
+operations at all. Turn the last one off to load and place the files and stop
+there, for when you want to look at a board rather than cut it.
+
+The list opens with the files that were read, in the order they were read --
+copper, outline, drills -- then the placement, then the toolpaths. 
 
 **Move to the origin** puts the bottom-left corner of the board outline on
 X0 Y0 and shifts every layer by that same amount. It is on by default, because

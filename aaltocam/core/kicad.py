@@ -188,10 +188,11 @@ def plot(pcb_path: str, outdir: str | None = None, layers: list[str] | None = No
 
 
 def open_board(pcb_path: str, side: str = "top", cli: str | None = None,
-               force: bool = False, origin: bool = False) -> tuple[Document, list[str]]:
+               force: bool = False, origin: bool = False,
+               operations: bool = True) -> tuple[Document, list[str]]:
     """Plot a .kicad_pcb and build the same starting graph as a plot folder."""
     outdir, notes = plot(pcb_path, cli=cli, force=force)
-    doc, more = build_board(outdir, side, origin=origin)
+    doc, more = build_board(outdir, side, origin=origin, operations=operations)
     # Remember the board, so the project can be re-plotted after it is saved,
     # closed and opened again.
     doc.source["kicad_pcb"] = os.path.abspath(pcb_path)

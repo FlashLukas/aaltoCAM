@@ -23,9 +23,11 @@ def _open(args):
     source = args.project
     if source.lower().endswith(".kicad_pcb"):
         doc, notes = kicad.open_board(source, side=args.side, cli=args.kicad_cli,
-                                      force=args.replot, origin=args.origin)
+                                      force=args.replot, origin=args.origin,
+                                      operations=args.operations)
     elif os.path.isdir(source):
-        doc, notes = discover.build_board(source, args.side, origin=args.origin)
+        doc, notes = discover.build_board(source, args.side, origin=args.origin,
+                                          operations=args.operations)
     else:
         return project_io.load(source)
 
@@ -57,6 +59,9 @@ def main(argv=None):
                              "(the default when starting from a board)")
     parser.add_argument("--no-origin", dest="origin", action="store_false",
                         help="leave the geometry on the plot's own origin")
+    parser.add_argument("--no-operations", dest="operations", action="store_false",
+                        default=True,
+                        help="load and place the files without adding any toolpaths")
     args = parser.parse_args(argv)
 
     try:

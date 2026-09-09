@@ -365,10 +365,21 @@ class MainWindow(QMainWindow):
         note = QLabel("Gerbers come out on KiCad's absolute origin, so the board "
                       "sits wherever it sat on the sheet, with negative Y. Copper, "
                       "outline and drills are all shifted by the same amount, "
-                      "measured from the outline.")
+                      "measured from the outline, and the untouched layers are "
+                      "hidden so the board is not drawn twice.")
         note.setWordWrap(True)
         note.setStyleSheet("color: gray")
         layout.addWidget(note)
+
+        operations = QCheckBox("Also add the usual operations")
+        operations.setChecked(True)
+        layout.addWidget(operations)
+        built = QLabel("Isolation, drilling, hole milling and the board cutout, "
+                       "each with a CNC job. Turn this off to just load the files "
+                       "and build the toolpaths yourself from the palette.")
+        built.setWordWrap(True)
+        built.setStyleSheet("color: gray")
+        layout.addWidget(built)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(dialog.accept)
@@ -378,7 +389,8 @@ class MainWindow(QMainWindow):
         if dialog.exec() != QDialog.Accepted:
             return None
         return {"side": "bottom" if bottom_button.isChecked() else "top",
-                "origin": origin.isChecked()}
+                "origin": origin.isChecked(),
+                "operations": operations.isChecked()}
 
     def open_board_folder(self):
         if not self._confirm_discard("Open a board folder"):
@@ -391,7 +403,8 @@ class MainWindow(QMainWindow):
         if options is None:
             return
         doc, notes = discover.build_board(directory, options["side"],
-                                          origin=options["origin"])
+                                          origin=options["origin"],
+                                          operations=options["operations"])
         if not doc.order:
             QMessageBox.warning(self, "Open board folder", "\n".join(notes) or
                                 "No Gerber or drill files recognised in that folder.")
@@ -431,9 +444,10 @@ class MainWindow(QMainWindow):
                                 f"The board file has moved or gone:\n{board}")
             return
         self._load_kicad_board(board, force=True, side=self.doc.source.get("side"),
-                               origin=bool(self.doc.source.get("origin")))
+                               origin=bool(self.doc.source.get("origin")),
+                               operations=bool(self.doc.source.get("operations", True)))
 
-    def _load_kicad_board(self, path, force, side=None, origin=False):
+    def _load_kicad_board(self, path, force, side=None, origin=False, operations=True):
         if side is None:
             # Plot first, then ask, because until KiCad has produced the
             # Gerbers there is no way to know whether there is a bottom side.
@@ -452,12 +466,15 @@ class MainWindow(QMainWindow):
                                        "Open KiCad board")
             if options is None:
                 return
-            side, origin = options["side"], options["origin"]
+            side = options["side"]
+            origin = options["origin"]
+            operations = options["operations"]
             force = False   # already plotted a moment ago
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            doc, notes = kicad.open_board(path, side=side, force=force, origin=origin)
+            doc, notes = kicad.open_board(path, side=side, force=force, origin=origin,
+                                          operations=operations)
         except kicad.KicadCliMissing as exc:
             QMessageBox.warning(self, "KiCad not found", str(exc))
             return
