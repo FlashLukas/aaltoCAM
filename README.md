@@ -117,9 +117,9 @@ board file:
 
     aaltocam board.kicad_pcb -o gcode/ --dialect wegstr --replot
 
-Coordinates come out on KiCad's absolute origin, so the board sits wherever it
-sat on the sheet. Add a `Transform` set to move to zero to bring it to the
-machine origin.
+Coordinates come out on KiCad's absolute origin, so unless you leave the move
+to the origin on, the board sits wherever it sat on the sheet. `--no-origin`
+turns it off from the CLI.
 
 Requires KiCad 7 or later installed; `kicad-cli` is found on PATH or in the
 usual install locations, or you can pass `--kicad-cli`.
@@ -327,12 +327,25 @@ on (0, 0) and the drills on (0.30, 0.30) — the 0.3 mm relationship is
 preserved, which is what you want. Zeroing each against itself would put
 both on (0, 0) and shift every hole by 0.3 mm.
 
-## Both sides
+## Where the board ends up
 
-Importing a board asks which side when there is copper on both. The top side
-is built as before. The bottom side puts every layer -- copper, outline and
-drills -- through its own Transform, all mirrored about Y against the *same*
-reference, the board outline where there is one.
+Importing a board asks two things: which side, when there is copper on both,
+and whether to move it to the origin. Both are about the same question -- where
+the geometry lands -- so they share one dialog.
+
+**Move to the origin** puts the bottom-left corner of the board outline on
+X0 Y0 and shifts every layer by that same amount. It is on by default, because
+a Gerber plotted on KiCad's absolute origin arrives wherever the board sat on
+the sheet, with negative Y: the sample RF board comes in at X 93.5, Y -100 and
+lands at X 0, Y 0 with it on. On a Wegstr, whose travel is 0-140 by 0-200, that
+is the difference between coordinates that mean something and coordinates that
+do not. It also removes the long rapid from the machine origin out to the
+board, which the run-time estimate had been counting -- 150 mm of travel became
+16 mm on that board.
+
+The bottom side puts every layer -- copper, outline and drills -- through its
+own Transform, all mirrored about Y against the *same* reference, the board
+outline where there is one.
 
 That shared reference is the whole point. Mirroring each layer about its own
 bounding box looks correct on screen and drills through the wrong pads,
@@ -342,6 +355,10 @@ One reference, one axis, everything moves by the same rule.
 Mirroring about Y means the board is turned over left to right. Set the
 `mirror` parameter on those Transform nodes to `x` if your fixture flips it
 the other way.
+
+With both on, a hole at x on the top side lands at (board width - x) on the
+bottom, which is the property the tests actually check: flip the board over and
+the same via is under the same drill.
 
 ## Height compensation
 

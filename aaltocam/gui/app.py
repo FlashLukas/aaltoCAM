@@ -12,8 +12,13 @@ from PySide6.QtGui import (QAction, QColor, QDesktopServices, QFont,
                            QKeySequence, QPalette)
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
     QDockWidget,
     QFileDialog,
+    QLabel,
+    QRadioButton,
     QHBoxLayout,
     QListWidget,
     QListWidgetItem,
@@ -281,29 +286,51 @@ class MainWindow(QMainWindow):
         self.recompute()
         self.view.fit()
 
-    def _ask_side(self, sides) -> str | None:
-        """Which copper side to build. Only worth asking when both exist."""
-        if "bottom" not in sides:
-            return "top"
-        if "top" not in sides:
-            return "bottom"
-        box = QMessageBox(self)
-        box.setWindowTitle("Which side?")
-        box.setText("This board has copper on both sides. Which one are you cutting?")
-        box.setInformativeText(
-            "The bottom side is mirrored about Y, so the board is turned over "
-            "left to right. Every layer is mirrored against the same reference, "
-            "which is what keeps the drills in register.")
-        top = box.addButton("Top", QMessageBox.AcceptRole)
-        bottom = box.addButton("Bottom", QMessageBox.AcceptRole)
-        box.addButton(QMessageBox.Cancel)
-        box.exec()
-        clicked = box.clickedButton()
-        if clicked is top:
-            return "top"
-        if clicked is bottom:
-            return "bottom"
-        return None
+    def _ask_import(self, sides, title="Import board") -> dict | None:
+        """Side and placement, asked once. None means the user cancelled.
+
+        Both questions are about the same thing -- where the geometry ends up --
+        so they belong in one dialog rather than a queue of message boxes.
+        """
+        dialog = QDialog(self)
+        dialog.setWindowTitle(title)
+        layout = QVBoxLayout(dialog)
+
+        both = "top" in sides and "bottom" in sides
+        top_button = QRadioButton("Top side")
+        bottom_button = QRadioButton("Bottom side")
+        top_button.setChecked("top" in sides)
+        bottom_button.setChecked("bottom" in sides and "top" not in sides)
+        if both:
+            layout.addWidget(QLabel("This board has copper on both sides."))
+            layout.addWidget(top_button)
+            layout.addWidget(bottom_button)
+            hint = QLabel("The bottom side is mirrored about Y, so the board is "
+                          "turned over left to right.")
+            hint.setWordWrap(True)
+            hint.setStyleSheet("color: gray")
+            layout.addWidget(hint)
+
+        origin = QCheckBox("Move everything so the board's bottom-left corner is X0 Y0")
+        origin.setChecked(True)
+        layout.addWidget(origin)
+        note = QLabel("Gerbers come out on KiCad's absolute origin, so the board "
+                      "sits wherever it sat on the sheet, with negative Y. Copper, "
+                      "outline and drills are all shifted by the same amount, "
+                      "measured from the outline.")
+        note.setWordWrap(True)
+        note.setStyleSheet("color: gray")
+        layout.addWidget(note)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() != QDialog.Accepted:
+            return None
+        return {"side": "bottom" if bottom_button.isChecked() else "top",
+                "origin": origin.isChecked()}
 
     def open_board_folder(self):
         if not self._confirm_discard("Open a board folder"):
@@ -311,10 +338,12 @@ class MainWindow(QMainWindow):
         directory = QFileDialog.getExistingDirectory(self, "Open board folder")
         if not directory:
             return
-        side = self._ask_side(discover.sides_present(directory))
-        if side is None:
+        options = self._ask_import(discover.sides_present(directory),
+                                   "Open board folder")
+        if options is None:
             return
-        doc, notes = discover.build_board(directory, side)
+        doc, notes = discover.build_board(directory, options["side"],
+                                          origin=options["origin"])
         if not doc.order:
             QMessageBox.warning(self, "Open board folder", "\n".join(notes) or
                                 "No Gerber or drill files recognised in that folder.")
@@ -353,9 +382,10 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Re-plot",
                                 f"The board file has moved or gone:\n{board}")
             return
-        self._load_kicad_board(board, force=True, side=self.doc.source.get("side"))
+        self._load_kicad_board(board, force=True, side=self.doc.source.get("side"),
+                               origin=bool(self.doc.source.get("origin")))
 
-    def _load_kicad_board(self, path, force, side=None):
+    def _load_kicad_board(self, path, force, side=None, origin=False):
         if side is None:
             # Plot first, then ask, because until KiCad has produced the
             # Gerbers there is no way to know whether there is a bottom side.
@@ -370,14 +400,16 @@ class MainWindow(QMainWindow):
                 return
             finally:
                 QApplication.restoreOverrideCursor()
-            side = self._ask_side(discover.sides_present(outdir))
-            if side is None:
+            options = self._ask_import(discover.sides_present(outdir),
+                                       "Open KiCad board")
+            if options is None:
                 return
+            side, origin = options["side"], options["origin"]
             force = False   # already plotted a moment ago
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            doc, notes = kicad.open_board(path, side=side, force=force)
+            doc, notes = kicad.open_board(path, side=side, force=force, origin=origin)
         except kicad.KicadCliMissing as exc:
             QMessageBox.warning(self, "KiCad not found", str(exc))
             return

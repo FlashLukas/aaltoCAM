@@ -56,23 +56,29 @@ def classify(directory: str) -> dict:
     return found
 
 
-def build_board(directory: str, side: str = "top") -> tuple[Document, list[str]]:
+def build_board(directory: str, side: str = "top",
+                origin: bool = False) -> tuple[Document, list[str]]:
     """Build a ready-to-cut graph from a plot folder.
 
     Returns the document and a list of notes about what was and was not
     recognised, so the caller can say something useful instead of silently
     producing an empty project.
 
-    For the bottom side every layer is put through a Transform mirrored about
-    the same reference -- the board outline where there is one. Mirroring each
-    layer about its own bounding box would look right on screen and drift out
-    of registration on the machine, which is the failure this avoids.
+    `origin` puts the board's bottom-left corner on X0 Y0, which is where a
+    Gerber plotted on KiCad's absolute origin is least useful: it arrives
+    wherever it sat on the sheet, with negative Y.
+
+    Both the mirror for the bottom side and the move to the origin are done by
+    one Transform per layer, all against the *same* reference -- the board
+    outline where there is one. That shared reference is the point: measuring
+    each layer against its own bounding box looks right on screen and drills
+    through the wrong pads, because copper and drills have different extents.
     """
     found = classify(directory)
     notes: list[str] = []
     doc = Document()
     doc.base_dir = os.path.abspath(directory)
-    doc.source = {"side": side}
+    doc.source = {"side": side, "origin": bool(origin)}
 
     wanted = found[side]
     if wanted is None and found[side] is None:
@@ -102,24 +108,32 @@ def build_board(directory: str, side: str = "top") -> tuple[Document, list[str]]
         notes.append(f"Outline: {os.path.basename(found['outline'])}")
 
     flip = side == "bottom"
-    # One shared reference for every mirror, so the layers stay in register.
+    # One shared reference for every layer, so they all move by the same delta.
     reference_id = outline_id or copper.id
+    reference_name = "the outline" if outline_id else "the copper"
 
-    def mirrored(source_id: str, label: str) -> str:
-        """A Transform that flips one layer, or the layer itself when not flipping."""
-        if not flip:
+    def placed(source_id: str, label: str) -> str:
+        """Flip and/or zero one layer. Returns the layer itself when neither."""
+        if not (flip or origin):
             return source_id
-        node = doc.add("transform", [source_id, reference_id], mirror="y",
-                       name=f"Flip {label}")
+        what = "Flip" if flip else "Zero"
+        if flip and origin:
+            what = "Flip and zero"
+        node = doc.add("transform", [source_id, reference_id],
+                       mirror="y" if flip else "none",
+                       align="bottom left" if origin else "none",
+                       name=f"{what} {label}")
         return node.id
 
     if flip:
-        notes.append("Bottom side: every layer mirrored about Y against "
-                     f"{'the outline' if outline_id else 'the copper'}, so the board "
-                     "is turned over left to right.")
+        notes.append(f"Bottom side: every layer mirrored about Y against {reference_name}, "
+                     "so the board is turned over left to right.")
+    if origin:
+        notes.append(f"Moved to the origin: the bottom-left corner of {reference_name} "
+                     "is now X0 Y0, and every layer shifted with it.")
 
-    copper_id = mirrored(copper.id, "copper")
-    cut_outline_id = mirrored(outline_id, "outline") if outline_id else ""
+    copper_id = placed(copper.id, "copper")
+    cut_outline_id = placed(outline_id, "outline") if outline_id else ""
 
     isolate = doc.add("isolate", [copper_id], tool_shape="v", passes=2, name="Isolation")
     doc.add("cnc_job", [isolate.id], cut_z=-0.1, feed_xy=150, name="Isolation job")
@@ -129,7 +143,7 @@ def build_board(directory: str, side: str = "top") -> tuple[Document, list[str]]
         excellon = doc.add("load_excellon", path=rel(drill_path),
                            name=os.path.basename(drill_path))
         notes.append(f"Drills: {os.path.basename(drill_path)}")
-        drills_id = mirrored(excellon.id, "drills")
+        drills_id = placed(excellon.id, "drills")
         holes = doc.add("drill_holes", [drills_id], name="Small holes (drill)")
         doc.add("cnc_job", [holes.id], cut_z=-1.8, multidepth=True, depth_per_pass=0.6,
                 name="Drill job")

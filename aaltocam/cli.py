@@ -23,9 +23,9 @@ def _open(args):
     source = args.project
     if source.lower().endswith(".kicad_pcb"):
         doc, notes = kicad.open_board(source, side=args.side, cli=args.kicad_cli,
-                                      force=args.replot)
+                                      force=args.replot, origin=args.origin)
     elif os.path.isdir(source):
-        doc, notes = discover.build_board(source, args.side)
+        doc, notes = discover.build_board(source, args.side, origin=args.origin)
     else:
         return project_io.load(source)
 
@@ -52,6 +52,11 @@ def main(argv=None):
                         help="force a fresh plot even if the existing one looks current")
     parser.add_argument("--dialect", default=None,
                         help="override the postprocessor on every CNC job node")
+    parser.add_argument("--origin", dest="origin", action="store_true", default=True,
+                        help="move the board so its bottom-left corner is X0 Y0 "
+                             "(the default when starting from a board)")
+    parser.add_argument("--no-origin", dest="origin", action="store_false",
+                        help="leave the geometry on the plot's own origin")
     args = parser.parse_args(argv)
 
     try:
