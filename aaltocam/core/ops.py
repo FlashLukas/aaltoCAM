@@ -200,8 +200,19 @@ def op_load_excellon(doc, node):
             continue
         hits.append((_to_mm(obj.x, obj.unit), _to_mm(obj.y, obj.unit), dia))
     hits.sort(key=lambda h: (round(h[2], 4), h[1], h[0]))
-    slots = sum(1 for _ in excellon.slots())
-    return Payload("drills", hits, {"source": os.path.basename(path), "slots": slots})
+
+    # Slots are routed, not drilled: a tool travels from one end to the other
+    # rather than plunging once. They ride along in the metadata so the drilling
+    # operations can go on ignoring them while Mill slots picks them up.
+    slots = []
+    for obj in excellon.slots():
+        width = _to_mm(obj.tool.diameter, obj.tool.unit) if obj.tool else 0.0
+        (x1, y1), (x2, y2) = obj.p1, obj.p2
+        slots.append((_to_mm(x1, obj.unit), _to_mm(y1, obj.unit),
+                      _to_mm(x2, obj.unit), _to_mm(y2, obj.unit), width))
+
+    return Payload("drills", hits, {"source": os.path.basename(path),
+                                    "slots": slots})
 
 
 @register(
@@ -399,15 +410,20 @@ def payload_bounds(payload: Payload):
     if payload.kind == "heightmap":
         return payload.data.bounds()
     if payload.kind == "drills":
-        if not payload.data:
+        # A file can hold slots and no round holes at all, and the extent has
+        # to cover them either way or the view fits to nothing.
+        spots = [(x, y, dia / 2) for x, y, dia in payload.data]
+        slots = payload.meta.get("slots")
+        if isinstance(slots, list):
+            for x1, y1, x2, y2, width in slots:
+                spots.append((x1, y1, width / 2))
+                spots.append((x2, y2, width / 2))
+        if not spots:
             return None
-        xs = [h[0] for h in payload.data]
-        ys = [h[1] for h in payload.data]
-        radii = [h[2] / 2 for h in payload.data]
-        return (min(x - r for x, r in zip(xs, radii)),
-                min(y - r for y, r in zip(ys, radii)),
-                max(x + r for x, r in zip(xs, radii)),
-                max(y + r for y, r in zip(ys, radii)))
+        return (min(x - r for x, _, r in spots),
+                min(y - r for _, y, r in spots),
+                max(x + r for x, _, r in spots),
+                max(y + r for _, y, r in spots))
     return None
 
 
@@ -996,6 +1012,85 @@ def _circle_segments(radius: float) -> int:
     ratio = max(1e-9, min(1.0, geo.ARC_TOLERANCE / max(radius, 1e-6)))
     per_quadrant = _m.ceil((_m.pi / 2) / _m.acos(1 - ratio)) if ratio < 1 else 4
     return max(4, min(48, per_quadrant))
+
+
+@register(
+    "mill_slots", "Mill slots",
+    [TOOL_CHOICE,
+     F("tool_dia", "Tool diameter", 0.8, unit="mm", minimum=0.05, maximum=10,
+       group="Tool", depends_on="!tool"),
+     B("clear_center", "Clear the whole slot", True, group="Cutting",
+       help="Off: one pass round the finished outline, which leaves a slug "
+            "behind in any slot wider than twice the tool. On: step inward "
+            "until the middle is gone."),
+     F("overlap", "Pass overlap", 0.3, minimum=0.0, maximum=0.95, step=0.05,
+       group="Cutting", depends_on="clear_center"),
+     B("optimize", "Optimise travel order", True, group="Cutting")],
+    inputs=["drills"], output="paths", category="CAM",
+)
+def op_mill_slots(doc, node, drills: Payload):
+    """Route the slots an Excellon file asks for.
+
+    A slot is a hole that is not round: a tool travels from one end to the
+    other with the drill's diameter as the slot's width. Nothing plunges once
+    and moves on, which is why the drilling operations cannot produce them and
+    they were counted and left alone until now.
+
+    The cutter follows the centreline offset sideways by half the difference
+    between the slot's width and its own, so the swept width comes out at the
+    slot's. A tool exactly the slot's width runs straight down the middle; one
+    wider than the slot cannot cut it at all and is reported rather than
+    quietly making the slot too big.
+    """
+    dia = _tool_dia(node)
+    overlap = float(node.params.get("overlap", 0.3))
+    clear = bool(node.params.get("clear_center", True))
+
+    lines: list[LineString] = []
+    cut = skipped = 0
+    for x1, y1, x2, y2, width in drills.meta.get("slots", []):
+        half = (width - dia) / 2
+        if half < -1e-9:
+            skipped += 1        # the tool is wider than the slot
+            continue
+
+        centre = LineString([(x1, y1), (x2, y2)])
+        offsets = [half]
+        if clear and half > 1e-9:
+            step = max(dia * (1.0 - overlap), 1e-4)
+            offsets = []
+            r = step / 2
+            while r < half - 1e-9:
+                offsets.append(r)
+                r += step
+            offsets.append(half)
+
+        for r in offsets:
+            if r <= 1e-9:
+                # Tool the width of the slot: straight along the middle.
+                lines.append(centre)
+            else:
+                ring = centre.buffer(r, cap_style=1, join_style=1).exterior
+                lines.append(LineString(ring.coords))
+        cut += 1
+
+    if bool(node.params.get("optimize", True)):
+        lines = geo.order_paths(lines)
+
+    meta = {
+        "tool_diameter": dia,
+        "slots": cut,
+        "cut_length": geo.cut_length(lines),
+        "travel_length": geo.travel_length(lines),
+    }
+    if skipped:
+        meta["warnings"] = [
+            f"{skipped} slot(s) are narrower than the {dia:g} mm tool and were "
+            f"left out. A slot cannot be cut by anything wider than itself."]
+    if not drills.meta.get("slots"):
+        meta["warnings"] = (meta.get("warnings", [])
+                            + ["This drill file has no slots in it."])
+    return Payload("paths", lines, meta)
 
 
 @register(

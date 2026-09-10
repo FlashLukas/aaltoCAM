@@ -83,6 +83,24 @@ def use_theme(name: str):
 use_theme("dark")
 
 
+def _capsule(x1, y1, x2, y2, r, steps=20):
+    """The shape a round tool sweeps from one point to the other.
+
+    Built as an explicit ring rather than with arcTo: the view is scaled -1 in
+    Y so millimetres run upwards, which reverses the direction of every arc and
+    turns a slot into a wedge if the angles are taken at face value.
+    """
+    angle = math.atan2(y2 - y1, x2 - x1)
+    points = []
+    for centre_x, centre_y, start in ((x2, y2, angle - math.pi / 2),
+                                      (x1, y1, angle + math.pi / 2)):
+        for step in range(steps + 1):
+            a = start + math.pi * step / steps
+            points.append((centre_x + r * math.cos(a),
+                           centre_y + r * math.sin(a)))
+    return points
+
+
 def _height_colour(value: float) -> QColor:
     """Map a deviation in -1..1 onto the diverging ramp."""
     value = max(-1.0, min(1.0, value))
@@ -529,11 +547,23 @@ class BoardView(QGraphicsView):
         edge.setStyle(Qt.DashLine)
         self._add(node_id, frame, edge, None, z=-0.4)
 
-    def show_drills(self, node_id, hits):
+    def show_drills(self, node_id, hits, slots=()):
+        """Round holes, and any routed slots that came with them.
+
+        Slots are drawn from the same node because they arrive in the same
+        file. Leaving them out made a board with slots show nothing where the
+        slots were, which reads as a file that failed to load.
+        """
         path = QPainterPath()
         for x, y, dia in hits:
             r = max(dia, 0.05) / 2
             path.addEllipse(QPointF(x, y), r, r)
+        for x1, y1, x2, y2, width in slots or ():
+            outline = _capsule(x1, y1, x2, y2, max(width, 0.05) / 2)
+            path.moveTo(*outline[0])
+            for point in outline[1:]:
+                path.lineTo(*point)
+            path.closeSubpath()
         pen = QPen(DRILL)
         pen.setCosmetic(True)
         pen.setWidthF(1.2)

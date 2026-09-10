@@ -1292,7 +1292,12 @@ class MainWindow(QMainWindow):
             if meta.get("rounded_corners"):
                 bits.append(f"{meta['rounded_corners']} corners will be rounded")
         if meta.get("slots"):
-            bits.append(f"{meta['slots']} slot(s) in file, not cut")
+            found = meta["slots"]
+            count = found if isinstance(found, int) else len(found)
+            # On a drill file this is what is waiting to be routed; on a Mill
+            # slots job it is what was.
+            waiting = "" if isinstance(found, int) else " to route"
+            bits.append(f"{count} slot(s){waiting}")
         if meta.get("tool"):
             bits.append(f"tool {meta['tool']}")
         if meta.get("chip_load_um"):
@@ -1338,7 +1343,10 @@ class MainWindow(QMainWindow):
                     self.view.show_paths(node_id, result.data,
                                          result.meta.get("tool_diameter", 0.0))
             elif result.kind == "drills":
-                self.view.show_drills(node_id, result.data)
+                slots = result.meta.get("slots")
+                self.view.show_drills(
+                    node_id, result.data,
+                    slots if isinstance(slots, list) else ())
             elif result.kind == "heightmap":
                 self.view.show_heightmap(node_id, result.data)
         self.view.set_extra_origins(self._secondary_origins())

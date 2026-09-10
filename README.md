@@ -143,6 +143,7 @@ any.
 | Internal cutout | slots, windows and mounting holes inside the board, tool side, tabs per opening |
 | Drill holes | grouped by diameter, nearest-neighbour ordering, large holes handed to milling |
 | Mill holes | circular interpolation for holes at or above a size threshold |
+| Mill slots | routes the slots in an Excellon file, offset so the swept width is the slot's |
 | Alignment holes | two registration holes on the flip axis, publishing that axis for the mirror |
 | Transform | move to origin, mirror, rotate, offset, scale — works on any payload, with an optional shared reference and a named mirror line |
 | Panelize | rows, columns, spacing |
@@ -379,6 +380,29 @@ The CNC job emits one tool change per group, in the dialect's own form
 (`M6` for GRBL and LinuxCNC, an `M0` pause with a comment for the
 conservative dialects).
 
+## Slots
+
+A slot is a hole that is not round: the drill file gives two points and a
+diameter, and the tool is meant to travel from one to the other with that
+diameter as the slot's width. Nothing plunges once and moves on, which is why
+the drilling operations cannot make them — they were counted and left alone
+until 0.20.0.
+
+**Mill slots** takes a drill file and routes them. The cutter follows the
+centreline offset sideways by half the difference between the slot's width and
+its own, so what comes out is the slot's width and not the tool's. A tool
+exactly the slot's width runs straight down the middle. A tool wider than the
+slot cannot cut it at all, and is reported rather than quietly producing a slot
+that is too big.
+
+![Two routed slots on the demo board](docs/screenshots/slots.png)
+
+**Clear the whole slot** is on by default. Off, you get one pass round the
+finished outline, which leaves a slug behind in any slot more than twice the
+tool's width — fine if you want the slug, a nuisance if you did not expect it.
+
+`examples/demo/demo-slots.drl` has two slots and two round holes to try it on.
+
 ## Drilling versus milling
 
 **Drill holes** has a size threshold. Holes at or above it are dropped from
@@ -611,7 +635,6 @@ Honest list, since this is one build rather than years of accumulation:
 - No panelising of different boards together, no film or solder-paste output,
   no design-rule check beyond the isolation clearance check.
 - No film, QR, solder-paste, panel-marker, calibration or rules-check tools.
-- Milled slots in Excellon files are counted but not cut.
 - Evaluation is synchronous. A board taking several seconds will block the
   window during recompute. Moving evaluation onto a worker thread is the
   obvious next change.

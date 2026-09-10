@@ -150,6 +150,14 @@ def _excellon(p, ink, accent):
         p.drawEllipse(QPointF(x, 50), r, r)
 
 
+def _mill_slots(p, ink, accent):
+    """A slot: the swept outline, and the path the cutter runs down it."""
+    _pen(p, ink, 6)
+    p.drawRoundedRect(QRectF(18, 38, 64, 24), 12, 12)
+    _pen(p, accent, 5)
+    p.drawLine(QPointF(32, 50), QPointF(68, 50))
+
+
 def _alignment(p, ink, accent):
     """The board, the line it turns over about, and the two pins on that line."""
     _pen(p, ink, 6)
@@ -298,6 +306,7 @@ GLYPHS = {
     "load_excellon": _excellon,
     "load_heightmap": _heightmap,
     "alignment_holes": _alignment,
+    "mill_slots": _mill_slots,
     "region": _region,
     "isolate": _isolate,
     "clear_copper": _clear,

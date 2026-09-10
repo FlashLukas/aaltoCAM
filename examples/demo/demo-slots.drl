@@ -1,0 +1,17 @@
+M48
+; Example drill file with routed slots, for trying Mill slots.
+; Two slots and two round holes, over the same area as demo-F_Cu.gbr.
+METRIC
+T1C0.900
+T2C1.600
+%
+G90
+G05
+T1
+X4.000Y4.000
+X4.000Y7.000G85X10.000Y7.000
+T2
+X15.000Y5.000
+X14.000Y10.000G85X14.000Y14.000
+T0
+M30
