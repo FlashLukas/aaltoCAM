@@ -141,6 +141,15 @@ class Postprocessor:
         if self.p.tool_diameter:
             self.emit(self.comment(
                 f"tool {self.p.tool_number}: dia {self.n(self.p.tool_diameter)} mm"))
+        origin = meta.get("origin")
+        if origin:
+            # This job's geometry was moved away from machine zero, so the
+            # coordinates below only land on the work if the machine is zeroed
+            # where the geometry went. Saying so in the file is the last chance
+            # to catch it: by here nobody is looking at the screen any more.
+            self.emit(self.comment(
+                f"zero the machine at X{self.n(origin[0])} Y{self.n(origin[1])} "
+                f"- this job is offset from machine zero"))
         self.emit("G21 (mm)")
         self.emit("G90 (absolute)")
         self.emit("G94 (units per minute)")

@@ -88,6 +88,23 @@ class Payload:
     meta: dict = field(default_factory=dict)
 
 
+def _carry_origin(inputs, result: "Payload"):
+    """Pass a layer's own zero down the chain unless the operation set one.
+
+    Only Transform can move geometry, so only Transform decides where zero
+    ended up. Everything downstream -- isolation, cutouts, drilling -- leaves
+    the work where it found it, but each builds fresh metadata of its own and
+    would otherwise drop the origin on the floor. The CNC job at the end is
+    exactly who needs it, to say whether its coordinates are on machine zero.
+    """
+    if "origin" in result.meta:
+        return
+    for payload in inputs:
+        if isinstance(payload, Payload) and "origin" in payload.meta:
+            result.meta["origin"] = payload.meta["origin"]
+            return
+
+
 # --------------------------------------------------------------------------
 # Nodes and document
 # --------------------------------------------------------------------------
@@ -251,6 +268,7 @@ class Document:
         result = operation.func(self, node, *args)
         if not isinstance(result, Payload):
             result = Payload(operation.output, result)
+        _carry_origin(args, result)
         self._cache[node_id] = result
         self._keys[node_id] = key
         return result

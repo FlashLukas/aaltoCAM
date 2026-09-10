@@ -143,7 +143,8 @@ any.
 | Internal cutout | slots, windows and mounting holes inside the board, tool side, tabs per opening |
 | Drill holes | grouped by diameter, nearest-neighbour ordering, large holes handed to milling |
 | Mill holes | circular interpolation for holes at or above a size threshold |
-| Transform | move to origin, mirror, rotate, offset, scale — works on any payload, with an optional shared reference |
+| Alignment holes | two registration holes on the flip axis, publishing that axis for the mirror |
+| Transform | move to origin, mirror, rotate, offset, scale — works on any payload, with an optional shared reference and a named mirror line |
 | Panelize | rows, columns, spacing |
 | Height map | probed X Y Z points, bilinear across a grid, nearest edge held outside it |
 | CNC job | depth, feeds, multi-depth passes, postprocessor choice, optional surface compensation |
@@ -448,6 +449,18 @@ Pins on one axis and a mirror about the other is refused rather than computed:
 a board turned over about one line cannot be mirrored about the other, and a
 plausible-looking answer there is worse than an error.
 
+**Edit → Set up the bottom side** wires all of that from a selected copper
+layer: the alignment holes, a CNC job to drill them, the mirrored copper, its
+isolation and its own job. Every piece of it can be built by hand — that is all
+the action does — but six nodes in the right order with the right options is the
+difference between the workflow being possible and being usable, and a mirror
+about the wrong line is not a mistake the geometry shows you.
+
+The bottom side comes out mirrored **in place**, not moved aside, because in
+place is what the machine needs: drill the pins and cut the top, turn the board
+over on them, and the bottom job's coordinates still land on the copper without
+re-zeroing anything.
+
 ## Both sides at once
 
 **Edit → Place beside the board** (Ctrl+Shift+B) moves the selected layer clear
@@ -458,11 +471,17 @@ on the Transform it creates and the second area is the bottom side.
 ![Top and bottom side by side, each with its own zero](docs/screenshots/two-sided.png)
 
 The offset is real geometry, not a drawing trick. The cursor readout, the
-measuring tool and the G-code all agree with what is on screen, and the layer is
-milled by zeroing the machine on its new origin — which is marked, dimmer than
-the machine zero, because there is only ever one of those. After a mirror that
-marker moves to the other corner, which is the point: it is showing where zero
-actually is once the board is flipped, not where it used to be.
+measuring tool and the G-code all agree with what is on screen — and that is
+exactly why a job built from a layer placed aside **warns that it is off machine
+zero**, on the node and in the G-code header. Those coordinates are only over
+the work if the machine is zeroed there too. Parking a copy for a second fixture
+position is a real thing to want; parking it to look at both sides and then
+cutting the file is how you mill your clamp.
+
+Only a copy deliberately marked as its own working area gets a second origin.
+Mirroring in place does not, and neither does moving a board onto the origin:
+a board turned over on its pins is cut at the very same zero, so there is
+nothing to re-zero and nothing to warn about.
 
 **View → Go to next origin** (`O`) cycles the view between them. At a working
 zoom only one area is on screen at a time, and hunting for the other is
@@ -589,8 +608,8 @@ Milled holes arrive as toolpaths and are compensated like any other cut.
 Honest list, since this is one build rather than years of accumulation:
 
 - No Gerber, geometry or G-code editors. Fix the board in KiCad instead.
-- No double-sided alignment wizard. `Transform` with mirror `y` handles the
-  bottom side, but you place the alignment holes yourself.
+- No panelising of different boards together, no film or solder-paste output,
+  no design-rule check beyond the isolation clearance check.
 - No film, QR, solder-paste, panel-marker, calibration or rules-check tools.
 - Milled slots in Excellon files are counted but not cut.
 - Evaluation is synchronous. A board taking several seconds will block the

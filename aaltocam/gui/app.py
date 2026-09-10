@@ -315,6 +315,9 @@ class MainWindow(QMainWindow):
         # Here rather than under View: it moves the geometry, so it belongs
         # with the things that change the project, not the camera.
         edit_menu.addAction(beside)
+        bottom = QAction("Set up the bottom side", self)
+        bottom.triggered.connect(self.setup_bottom_side)
+        edit_menu.addAction(bottom)
 
         tools_menu = self.menuBar().addMenu("&Tools")
         edit_tools = QAction("Edit tool library...", self)
@@ -1081,13 +1084,58 @@ class MainWindow(QMainWindow):
         shift = right - mine[0] + BESIDE_GAP_MM
         self.push_undo()
         moved = self.doc.add("transform", [node.id],
-                             name=f"{node.name} aside", offset_x=shift)
+                             name=f"{node.name} aside", offset_x=shift,
+                             aside=True)
         self.refresh_list(select=moved.id)
         self.recompute()
         self.view.centre_on(shift, 0.0)
         self.statusBar().showMessage(
             f"{moved.name} placed at X {shift:.3f} mm. For the other side of "
             f"the board, set Mirror to 'y' in the panel.", 9000)
+
+    def setup_bottom_side(self):
+        """Wire the whole second side from the selected copper layer.
+
+        Every piece of this could be built by hand -- that is all it does -- but
+        six nodes in the right order with the right options is the difference
+        between the workflow being possible and being usable, and getting the
+        mirror axis wrong is not a mistake the geometry shows you.
+
+        The bottom side is mirrored *in place*, not moved aside. In place is
+        what the machine needs: flip the board on its pins, re-zero nothing,
+        and the coordinates still land on the copper. Use Place beside the
+        board afterwards if you want to look at both at once, and read the
+        warning it puts on the job before cutting that one.
+        """
+        node = self.current_node()
+        if node is None:
+            self.statusBar().showMessage(
+                "Select the copper layer to build the bottom side from.", 5000)
+            return
+        result = self.results.get(node.id)
+        if not hasattr(result, "kind") or result.kind != "copper":
+            self.statusBar().showMessage(
+                f"{node.name} is not a copper layer. Select the Gerber to "
+                f"mirror.", 5000)
+            return
+
+        self.push_undo()
+        pins = self.doc.add("alignment_holes", [node.id], name="Alignment holes")
+        # Drilled from the top, before the board is turned over: they are the
+        # pins the flip registers on, so they have to exist first.
+        self.doc.add("cnc_job", [pins.id], name="Alignment drilling")
+        flipped = self.doc.add(
+            "transform", [node.id, "", pins.id], name="Bottom copper",
+            mirror="y", mirror_about="alignment holes")
+        routed = self.doc.add("isolate", [flipped.id], name="Bottom isolation")
+        job = self.doc.add("cnc_job", [routed.id], name="Bottom job")
+
+        self.refresh_list(select=job.id)
+        self.recompute()
+        self.statusBar().showMessage(
+            "Bottom side wired: drill the alignment holes and cut the top "
+            "first, then flip the board on the pins and run the bottom job.",
+            12000)
 
     def rename_current(self):
         """Start an in-place edit of the selected operation."""

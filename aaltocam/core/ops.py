@@ -437,6 +437,13 @@ def _align_delta(bounds, mode: str):
        group="Position"),
      F("offset_y", "Then offset Y", 0.0, unit="mm", minimum=-1000, maximum=1000,
        group="Position"),
+     B("aside", "A working area of its own", False, group="Position",
+       help="Tick when this copy is parked clear of the board rather than "
+            "sitting where the board sits -- a second fixture position, or "
+            "both sides laid out side by side to look at. A CNC job built "
+            "from it then says it is off machine zero, in the file as well as "
+            "on the node, because those coordinates only land on the work if "
+            "the machine is zeroed there too."),
      C("mirror", "Mirror", "none", ["none", "x", "y"], group="Orientation",
        help="Use 'y' for the bottom side of a board flipped left to right."),
      C("mirror_about", "Mirror about", "reference centre",
@@ -535,11 +542,22 @@ def op_transform(doc, node, source: Payload, reference: Payload = None,
     # point is what the operator keys in -- worth marking on the view rather
     # than leaving them to work it out from the offsets. Carried through the
     # source's own origin, so a chain of transforms composes correctly.
-    moved = fn(Point(*source.meta.get("origin", (0.0, 0.0))))
-    if abs(moved.x) > 1e-9 or abs(moved.y) > 1e-9:
-        result.meta["origin"] = (moved.x, moved.y)
+    # A working area of this layer's own, if it was deliberately parked clear
+    # of the board rather than left where the board sits.
+    #
+    # Only the translation counts, and only when 'aside' says that was the
+    # intent. Mirroring in place is the ordinary bottom side: the board is
+    # turned over and cut at the same zero, so there is no second area and
+    # nothing to re-zero -- while the mathematical image of (0,0) under a
+    # mirror lands somewhere meaningless, and treating it as an origin made
+    # every correct bottom side claim to be offset. Aligning to the origin
+    # translates too, and equally needs no warning.
+    previous = source.meta.get("origin") or (0.0, 0.0)
+    if bool(node.params.get("aside", False)):
+        spot = (previous[0] + dx + ox, previous[1] + dy + oy)
     else:
-        result.meta.pop("origin", None)
+        spot = previous
+    result.meta["origin"] = spot if any(abs(v) > 1e-9 for v in spot) else None
     return result
 
 
@@ -1191,6 +1209,19 @@ def op_cnc_job(doc, node, source: Payload, height: Payload = None):
     dialect = node.params["dialect"]
     meta = {"title": node.name}
     warnings: list[str] = []
+
+    # Geometry that was moved away from machine zero carries its own origin.
+    # Cutting this file means zeroing the machine there instead, which is
+    # right for a second fixture position and disastrous if the offset was
+    # only ever meant for looking at both sides of a board at once. The job
+    # cannot tell which, so it says what it knows rather than guessing.
+    offset = source.meta.get("origin")
+    if offset:
+        meta["origin"] = offset
+        warnings.append(
+            f"This job is offset from machine zero: its own origin is at "
+            f"X{offset[0]:.3f} Y{offset[1]:.3f}. Zero the machine there before "
+            f"running it, or remove the offset if it was only for viewing.")
     arc_tolerance = float(node.params.get("arc_tolerance", 0.0))
 
     # Which cutter's numbers to use: an explicit override on the job, else the
