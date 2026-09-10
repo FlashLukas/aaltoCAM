@@ -82,6 +82,19 @@ one idea. `python -m aaltocam.gui.icons <dir>` writes it out as `.ico` and
 `.png`; the installer uses that for the desktop shortcut and the standalone
 build, so the shortcut and the running window always show the same mark.
 
+**View → Theme** switches between dark and light. The choice is written to
+`settings.toml` beside the tool library and worn at the next start, not this
+one — restyling a running window means rebuilding every drawn icon and every
+item already in the scene, and doing that halfway through a job is a good way
+to lose the view you were working in. The menu says so when you pick one.
+
+![The light theme](docs/screenshots/light.png)
+
+The light theme is not the dark one inverted. Copper on white has to be darker
+to still read as copper, the toolpath blue has to survive a pale ground, and
+the origin marker swaps from near-white to near-black because its job is to be
+the most legible thing on screen.
+
 **File → Open board folder** (Ctrl+Shift+O) points at a KiCad plot
 directory and builds a working graph from what it finds: copper, drills and
 Edge.Cuts wired through isolation, drilling, hole milling and cutout. It

@@ -13,31 +13,74 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsScene, QGraphicsView
 
-COPPER = QColor("#B4622C")
-COPPER_EDGE = QColor("#D98A4E")
-TOOLPATH = QColor("#4FA3E3")
-TRAVEL = QColor("#2E5C82")
-DRILL = QColor("#E8E4DC")
-REGION = QColor("#5FD3A8")
-ALERT = QColor("#E5484D")
-ALERT_FILL = QColor(229, 72, 77, 90)
-REGION_FILL = QColor(95, 211, 168, 38)
-BACKGROUND = QColor("#12161C")
-GRID = QColor("#232B36")
-GRID_FINE = QColor("#1A202A")
-AXIS = QColor("#39485C")          # the two lines through zero, under the board
-ORIGIN = QColor("#F0EDE6")        # the marker at zero, over everything
-ORIGIN_SECOND = QColor("#9AA6B4")  # a layer's own zero after it was moved aside
-MEASURE = QColor("#F2C14E")
-MEASURE_DIM = QColor(242, 193, 78, 120)
-LABEL_BG = QColor(9, 12, 16, 216)
+# Two palettes, applied once at start-up by use_theme(). The names below are
+# module globals that every painter reads, so switching means rebinding them
+# rather than threading a theme object through the drawing code.
+#
+# The light one is not the dark one inverted. Copper on white needs to be
+# darker to stay copper rather than washing out; the toolpath blue has to
+# survive against a pale ground; and the origin marker swaps from near-white to
+# near-black because its job is to be the most legible thing on screen.
 
-# Height map: a diverging pair, because what matters is which side of the
-# reference a point sits on, not just how far. Neither end is red or green.
-HEIGHT_LOW = QColor("#4F8FE3")    # below the reference
-HEIGHT_HIGH = QColor("#E39A4F")   # above it
-HEIGHT_ZERO = QColor("#59626E")   # flat, and close enough to the board to fade
-HEIGHT_EDGE = QColor("#7C8794")   # the probed boundary, beyond which Z is held
+DARK = {
+    "COPPER": QColor("#B4622C"),
+    "COPPER_EDGE": QColor("#D98A4E"),
+    "TOOLPATH": QColor("#4FA3E3"),
+    "TRAVEL": QColor("#2E5C82"),
+    "DRILL": QColor("#E8E4DC"),
+    "REGION": QColor("#5FD3A8"),
+    "ALERT": QColor("#E5484D"),
+    "ALERT_FILL": QColor(229, 72, 77, 90),
+    "REGION_FILL": QColor(95, 211, 168, 38),
+    "BACKGROUND": QColor("#12161C"),
+    "GRID": QColor("#232B36"),
+    "GRID_FINE": QColor("#1A202A"),
+    "AXIS": QColor("#39485C"),          # the lines through zero, under the board
+    "ORIGIN": QColor("#F0EDE6"),        # the marker at zero, over everything
+    "ORIGIN_SECOND": QColor("#9AA6B4"),  # a layer's own zero once moved aside
+    "MEASURE": QColor("#F2C14E"),
+    "MEASURE_DIM": QColor(242, 193, 78, 120),
+    "LABEL_BG": QColor(9, 12, 16, 216),
+    # Height map: a diverging pair, because what matters is which side of the
+    # reference a point is on, not only how far. Neither end is red or green.
+    "HEIGHT_LOW": QColor("#4F8FE3"),    # below the reference
+    "HEIGHT_HIGH": QColor("#E39A4F"),   # above it
+    "HEIGHT_ZERO": QColor("#59626E"),   # flat, and close to the board so it fades
+    "HEIGHT_EDGE": QColor("#7C8794"),   # the probed edge, beyond which Z is held
+}
+
+LIGHT = {
+    "COPPER": QColor("#B26A33"),
+    "COPPER_EDGE": QColor("#8A4A18"),
+    "TOOLPATH": QColor("#1F6FB8"),
+    "TRAVEL": QColor("#8FAFC8"),
+    "DRILL": QColor("#2A3038"),
+    "REGION": QColor("#128761"),
+    "ALERT": QColor("#C0272D"),
+    "ALERT_FILL": QColor(192, 39, 45, 60),
+    "REGION_FILL": QColor(18, 135, 97, 40),
+    "BACKGROUND": QColor("#FAFAF7"),
+    "GRID": QColor("#D8DDE3"),
+    "GRID_FINE": QColor("#ECEFF2"),
+    "AXIS": QColor("#A9B4C0"),
+    "ORIGIN": QColor("#12161C"),
+    "ORIGIN_SECOND": QColor("#6B7684"),
+    "MEASURE": QColor("#9A6B08"),
+    "MEASURE_DIM": QColor(154, 107, 8, 120),
+    "LABEL_BG": QColor(255, 255, 255, 226),
+    "HEIGHT_LOW": QColor("#2E6FBF"),
+    "HEIGHT_HIGH": QColor("#B4762B"),
+    "HEIGHT_ZERO": QColor("#C7CDD4"),
+    "HEIGHT_EDGE": QColor("#7C8794"),
+}
+
+
+def use_theme(name: str):
+    """Bind the drawing colours for one theme. Call before building the view."""
+    globals().update(LIGHT if name == "light" else DARK)
+
+
+use_theme("dark")
 
 
 def _height_colour(value: float) -> QColor:

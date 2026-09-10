@@ -8,8 +8,8 @@ import time
 
 from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtCore import QUrl
-from PySide6.QtGui import (QAction, QColor, QDesktopServices, QFont,
-                           QKeySequence, QPalette)
+from PySide6.QtGui import (QAction, QActionGroup, QColor, QDesktopServices,
+                           QFont, QKeySequence, QPalette)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -41,6 +41,8 @@ from ..core import discover
 from ..core import kicad
 from ..core import tools as toollib
 from ..core import project as project_io
+from ..core import settings
+from . import canvas
 from . import icons
 from .canvas import BoardView
 from .paramform import ParamForm
@@ -332,6 +334,18 @@ class MainWindow(QMainWindow):
         next_origin.setShortcut("O")
         next_origin.triggered.connect(self.focus_next_origin)
         view_menu.addAction(next_origin)
+
+        view_menu.addSeparator()
+        theme_menu = view_menu.addMenu("Theme")
+        current = settings.load().get("theme", "dark")
+        self._theme_actions = QActionGroup(self)
+        self._theme_actions.setExclusive(True)
+        for name in settings.THEMES:
+            action = QAction(name.capitalize(), self, checkable=True)
+            action.setChecked(name == current)
+            action.triggered.connect(lambda _c=False, n=name: self.choose_theme(n))
+            self._theme_actions.addAction(action)
+            theme_menu.addAction(action)
         travel = QAction("Show travel moves", self, checkable=True, checked=True)
         travel.triggered.connect(self._toggle_travel)
         view_menu.addAction(travel)
@@ -1000,6 +1014,23 @@ class MainWindow(QMainWindow):
         self._apply_name(node, name)
         self.refresh_list(select=node_id)
 
+    def choose_theme(self, name: str):
+        """Record the theme. It is worn at the next start, not this one.
+
+        Restyling a running window means rebuilding every drawn icon and every
+        item already in the scene, and doing that halfway through a job is a
+        good way to lose the view someone was working in. Writing the choice
+        down and saying so plainly is honest and costs one restart.
+        """
+        try:
+            settings.set_theme(name)
+        except OSError as exc:
+            QMessageBox.warning(self, "Could not save the theme", str(exc))
+            return
+        self.statusBar().showMessage(
+            f"{name.capitalize()} theme saved. It is applied the next time "
+            f"aaltocam starts.", 8000)
+
     def focus_next_origin(self):
         """Centre the view on the next zero, the machine's included.
 
@@ -1311,11 +1342,54 @@ def dark_palette() -> QPalette:
     return palette
 
 
+def light_palette() -> QPalette:
+    """The light theme's window chrome.
+
+    Not the dark palette inverted: the accent stays a copper that reads as
+    copper on white rather than the pale orange that would come of flipping
+    lightness, and highlighted text goes to white because the accent is dark
+    enough to carry it.
+    """
+    palette = QPalette()
+    base = QColor("#FFFFFF")
+    panel = QColor("#F1F2F4")
+    text = QColor("#1B2129")
+    accent = QColor("#B26A33")
+    palette.setColor(QPalette.Window, panel)
+    palette.setColor(QPalette.WindowText, text)
+    palette.setColor(QPalette.Base, base)
+    palette.setColor(QPalette.AlternateBase, panel)
+    palette.setColor(QPalette.Text, text)
+    palette.setColor(QPalette.Button, panel)
+    palette.setColor(QPalette.ButtonText, text)
+    palette.setColor(QPalette.Highlight, accent)
+    palette.setColor(QPalette.HighlightedText, QColor("#FFFFFF"))
+    palette.setColor(QPalette.ToolTipBase, base)
+    palette.setColor(QPalette.ToolTipText, text)
+    # The palette's section headings are styled palette(bright-text), which
+    # means "legible against a dark background" and is therefore exactly wrong
+    # here. Left to Fusion's default it comes out near-white on near-white.
+    palette.setColor(QPalette.BrightText, QColor("#59667A"))
+    return palette
+
+
+def apply_theme(app, name: str):
+    """Dress the application in one theme. Once, before any window is built.
+
+    The board view's colours are module globals read by every painter, and the
+    icons are drawn from the running palette, so both have to be settled before
+    anything asks for a colour -- which is why this is a start-up decision and
+    not a live toggle.
+    """
+    canvas.use_theme(name)
+    app.setPalette(light_palette() if name == "light" else dark_palette())
+
+
 def main(argv=None):
     argv = list(sys.argv if argv is None else argv)
     app = QApplication(argv)
     app.setStyle("Fusion")
-    app.setPalette(dark_palette())
+    apply_theme(app, settings.load().get("theme", "dark"))
     app.setApplicationName("aaltocam")
     app.setWindowIcon(icons.app_icon())
     window = MainWindow()
