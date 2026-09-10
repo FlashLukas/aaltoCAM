@@ -3,7 +3,7 @@
     Install aaltocam and put a shortcut on the desktop.
 
 .DESCRIPTION
-    Finds a Python 3.11 or newer, installing one per-user through winget if
+    Finds a Python 3.12 or newer, installing one per-user through winget if
     there is none, unpacks aaltocam outside OneDrive, builds a virtual
     environment and installs into it.
 
@@ -49,7 +49,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$MinimumPython = [version]'3.11'
+$MinimumPython = [version]'3.12'
 
 # PowerShell 5.1 does not define these, and this script has to run there too.
 if ($null -eq $IsWindows) { $IsWindows = $true }
@@ -115,7 +115,7 @@ function Find-Python {
         # the one that used to stop the script outright, only harder to see.
         $ErrorActionPreference = 'Continue'
         try {
-            foreach ($tag in '3.13', '3.12', '3.11', '3') {
+            foreach ($tag in '3.13', '3.12', '3') {
                 try {
                     # No embedded quotes here, so this one survives 5.1 intact.
                     $found = & $launcher.Source "-$tag" -c 'import sys; print(sys.executable)' 2>$null
@@ -273,7 +273,7 @@ function New-Shortcut {
 
 # ---------------------------------------------------------------------------
 
-Write-Step 'Looking for Python 3.11 or newer'
+Write-Step 'Looking for Python 3.12 or newer'
 $python = Find-Python
 if ($python) {
     Write-Note "$($python.Exe)  ($($python.Version))"

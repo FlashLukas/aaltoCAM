@@ -179,6 +179,27 @@ def test_the_output_is_toolpaths_a_job_can_take(tmp_path):
     assert text.strip().endswith("M2")
 
 
+def test_the_declared_dependencies_can_actually_read_a_slot():
+    """The floor is not a preference, it is what G85 costs.
+
+    gerbonara below 1.6 does not know the statement at all, and 1.6 needs
+    Python 3.12. Loosening either lets pip resolve an install where a drill
+    file containing slots fails to open -- the whole file, not merely its
+    slots -- which is how this was found, in CI, one release too late.
+    """
+    import tomllib
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    with (root / "pyproject.toml").open("rb") as fh:
+        project = tomllib.load(fh)["project"]
+
+    assert project["requires-python"] == ">=3.12"
+    gerbonara = next(d for d in project["dependencies"]
+                     if d.startswith("gerbonara"))
+    assert gerbonara == "gerbonara>=1.6"
+
+
 def test_cut_length_is_reported(tmp_path):
     out = milled(tmp_path, tool_dia=0.4)
     # Two slots, 15 mm and 10 mm, each cut as a loop around the centreline.

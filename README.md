@@ -44,8 +44,13 @@ python -m pip install gerbonara shapely PySide6-Essentials
 python -m pip install -e .
 ```
 
-Python 3.11 or newer. The core needs only gerbonara and Shapely; PySide6 is
+Python 3.12 or newer. The core needs only gerbonara and Shapely; PySide6 is
 required for the GUI, not for the CLI.
+
+3.12 rather than 3.11 because slots need gerbonara 1.6, and gerbonara 1.6
+needs 3.12. On 3.11 pip can only reach gerbonara 1.5, which does not parse
+the `G85` statement at all — a drill file containing slots fails to open,
+whole file, not merely the slots in it.
 
 ## Run
 

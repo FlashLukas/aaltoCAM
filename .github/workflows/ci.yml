@@ -28,8 +28,9 @@ jobs:
       fail-fast: false
       matrix:
         # The floor claimed in pyproject.toml, and the version releases are
-        # built with. Everything between the two is assumed, not tested.
-        python-version: ['3.11', '3.13']
+        # built with. The floor is 3.12 because gerbonara 1.6 needs it, and
+        # gerbonara 1.6 is what reads slots.
+        python-version: ['3.12', '3.13']
 
     steps:
       - uses: actions/checkout@v7
