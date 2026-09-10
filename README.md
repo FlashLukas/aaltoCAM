@@ -402,6 +402,39 @@ already picked and re-references it to zero rather than throwing it away.
 Middle-drag pans in every mode, including while measuring or drawing a region
 — a mode you cannot pan out of is a trap.
 
+## Turning the board over
+
+**Alignment holes** puts two registration holes on the line the board will be
+flipped about — through the board and into whatever it is clamped to, so they
+become the pins it locates on afterwards. Two, and on the axis: a pair off the
+axis, or a third hole, only adds ways for the board to sit down wrong.
+
+![Alignment holes on the flip axis, and the bottom side mirrored about them](docs/screenshots/alignment.png)
+
+The reason to place them here rather than by hand is that the node publishes
+the axis. Wire it into a Transform's **Mirror axis** input, set **Mirror about**
+to `alignment holes`, and the mirror uses that exact line.
+
+**This matters more than it sounds.** `Mirror about` defaults to `reference
+centre` — the middle of the bounding box — which is right only if you happen to
+turn the board over about exactly that line. Flip it about pins somewhere else
+and the far side lands out by twice the distance between the two lines. On the
+demo board the centre is x = 10.05 mm, so flipping about x = 0 instead would put
+the bottom side 20.1 mm adrift: well-formed geometry, registering nowhere,
+discovered after the copper is cut. Naming the line is what stops that.
+
+Three ways to name it, and they agree with each other:
+
+| Mirror about | The line is |
+|---|---|
+| `reference centre` | the middle of the reference bounding box — the old behaviour, so existing projects are unchanged |
+| `coordinate` | a number you type: X for a `y` mirror, Y for an `x` one |
+| `alignment holes` | the line through the pins wired into **Mirror axis** |
+
+Pins on one axis and a mirror about the other is refused rather than computed:
+a board turned over about one line cannot be mirrored about the other, and a
+plausible-looking answer there is worse than an error.
+
 ## Both sides at once
 
 **Edit → Place beside the board** (Ctrl+Shift+B) moves the selected layer clear

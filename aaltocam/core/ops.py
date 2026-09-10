@@ -240,6 +240,68 @@ def op_load_heightmap(doc, node):
     })
 
 
+@register(
+    "alignment_holes", "Alignment holes",
+    [C("axis", "Flip axis", "y", ["y", "x"],
+       help="Which line the board is turned over about. 'y' is a vertical "
+            "line, so the board flips left to right and the holes sit above "
+            "and below it. 'x' is horizontal, and they sit left and right."),
+     C("place", "Axis position", "board centre", ["board centre", "coordinate"],
+       help="The centre of the board is the usual choice. A coordinate is for "
+            "a fixture whose pins are somewhere else."),
+     F("at", "Axis at", 0.0, unit="mm", minimum=-1000, maximum=1000, step=0.5,
+       decimals=3, depends_on="place:coordinate",
+       help="Used when the axis position is a coordinate."),
+     F("diameter", "Hole diameter", 2.0, unit="mm", minimum=0.1, maximum=20,
+       step=0.1, group="Holes"),
+     F("margin", "Clear of the board by", 5.0, unit="mm", minimum=0.0,
+       maximum=200, step=1, group="Holes",
+       help="How far outside the board edge the hole centres sit. They have "
+            "to miss the copper and the cutout, and be reachable with the "
+            "board clamped.")],
+    inputs=["any"], output="drills", category="CAM",
+    input_labels=["Board"],
+)
+def op_alignment_holes(doc, node, board: Payload):
+    """Two registration holes on the line the board will be flipped about.
+
+    Drilled through the board and into whatever it is clamped to, they become
+    the pins the board locates on after being turned over. Two is the right
+    number and they belong *on* the flip axis: a pair off the axis, or a third
+    hole, only adds ways for the board to sit down wrong.
+
+    The point of doing this here rather than by hand is the axis. The node
+    publishes it, and a Transform wired to it mirrors about that exact line
+    instead of about a bounding-box centre that has nothing to do with where
+    the board physically turns over.
+    """
+    bounds = payload_bounds(board)
+    if bounds is None:
+        raise ValueError("Alignment holes need a board with some extent to "
+                         "measure against")
+    minx, miny, maxx, maxy = bounds
+    axis = str(node.params.get("axis", "y"))
+    margin = float(node.params.get("margin", 5.0))
+    dia = float(node.params.get("diameter", 2.0))
+
+    if str(node.params.get("place", "board centre")) == "coordinate":
+        at = float(node.params.get("at", 0.0))
+    else:
+        at = (minx + maxx) / 2 if axis == "y" else (miny + maxy) / 2
+
+    if axis == "y":
+        hits = [(at, miny - margin, dia), (at, maxy + margin, dia)]
+    else:
+        hits = [(minx - margin, at, dia), (maxx + margin, at, dia)]
+
+    return Payload("drills", hits, {
+        "axis": (axis, at),
+        "holes": len(hits),
+        "summary": f"flip about {axis} = {at:.3f} mm, "
+                   f"2 holes dia {dia:g} mm, {margin:g} mm clear",
+    })
+
+
 # --------------------------------------------------------------------------
 # Transforms (work on any payload kind)
 # --------------------------------------------------------------------------
@@ -376,14 +438,28 @@ def _align_delta(bounds, mode: str):
      F("offset_y", "Then offset Y", 0.0, unit="mm", minimum=-1000, maximum=1000,
        group="Position"),
      C("mirror", "Mirror", "none", ["none", "x", "y"], group="Orientation",
-       help="Mirrored about the reference centre. Use 'y' for the bottom side."),
+       help="Use 'y' for the bottom side of a board flipped left to right."),
+     C("mirror_about", "Mirror about", "reference centre",
+       ["reference centre", "coordinate", "alignment holes"],
+       group="Orientation",
+       help="Which line to mirror across. The reference centre is what the "
+            "board's bounding box says; a coordinate is a line you name; "
+            "alignment holes takes the line through the pins wired into the "
+            "Mirror axis input, which is the one the board actually turns "
+            "over about."),
+     F("mirror_at", "Mirror at", 0.0, unit="mm", minimum=-1000, maximum=1000,
+       step=0.5, decimals=3, group="Orientation",
+       depends_on="mirror_about:coordinate",
+       help="Used when mirroring about a coordinate: X for a 'y' mirror, "
+            "Y for an 'x' one."),
      F("rotate", "Rotate", 0.0, unit="deg", minimum=-360, maximum=360, step=1, decimals=2,
        group="Orientation"),
      F("scale", "Scale", 1.0, minimum=0.01, maximum=100, step=0.01, group="Orientation")],
-    inputs=["any", "?any"], output="any", category="Edit",
-    input_labels=["Geometry", "Reference"],
+    inputs=["any", "?any", "?any"], output="any", category="Edit",
+    input_labels=["Geometry", "Reference", "Mirror axis"],
 )
-def op_transform(doc, node, source: Payload, reference: Payload = None):
+def op_transform(doc, node, source: Payload, reference: Payload = None,
+                 axis_source: Payload = None):
     """Mirror, rotate, scale and position a layer.
 
     The optional reference input is what makes double-sided work survivable:
@@ -403,11 +479,37 @@ def op_transform(doc, node, source: Payload, reference: Payload = None):
     else:
         anchor = ((ref_bounds[0] + ref_bounds[2]) / 2, (ref_bounds[1] + ref_bounds[3]) / 2)
 
+    # The mirror gets its own line, while scale and rotation keep pivoting
+    # about the reference centre. They are different questions: turning a
+    # board over happens about a physical axis, and mirroring about a
+    # bounding-box centre instead lands the far side out by twice the distance
+    # between the two -- silently, and only discovered after cutting.
+    mirror_origin = anchor
+    if mirror != "none":
+        mode = str(node.params.get("mirror_about", "reference centre"))
+        if mode == "coordinate":
+            at = float(node.params.get("mirror_at", 0.0))
+            mirror_origin = (at, anchor[1]) if mirror == "y" else (anchor[0], at)
+        elif mode == "alignment holes":
+            published = (axis_source.meta.get("axis")
+                         if axis_source is not None else None)
+            if published is None:
+                raise ValueError(
+                    "Mirroring about alignment holes needs an Alignment holes "
+                    "node connected to the Mirror axis input")
+            kind, at = published
+            if kind != mirror:
+                raise ValueError(
+                    f"The alignment holes lie on the {kind} axis but this "
+                    f"transform mirrors about {mirror}. A board turned over "
+                    f"about one line cannot be mirrored about the other")
+            mirror_origin = (at, anchor[1]) if mirror == "y" else (anchor[0], at)
+
     def orient(g):
         if mirror == "x":
-            g = affinity.scale(g, xfact=1, yfact=-1, origin=anchor)
+            g = affinity.scale(g, xfact=1, yfact=-1, origin=mirror_origin)
         elif mirror == "y":
-            g = affinity.scale(g, xfact=-1, yfact=1, origin=anchor)
+            g = affinity.scale(g, xfact=-1, yfact=1, origin=mirror_origin)
         if scale != 1.0:
             g = affinity.scale(g, xfact=scale, yfact=scale, origin=anchor)
         if rot:

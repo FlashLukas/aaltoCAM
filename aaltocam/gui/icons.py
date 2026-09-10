@@ -150,6 +150,18 @@ def _excellon(p, ink, accent):
         p.drawEllipse(QPointF(x, 50), r, r)
 
 
+def _alignment(p, ink, accent):
+    """The board, the line it turns over about, and the two pins on that line."""
+    _pen(p, ink, 6)
+    p.drawRoundedRect(QRectF(22, 30, 56, 40), 6, 6)
+    _pen(p, accent, 4, Qt.DashLine)
+    p.drawLine(QPointF(50, 10), QPointF(50, 90))
+    p.setPen(Qt.NoPen)
+    p.setBrush(QBrush(accent))
+    for y in (18, 82):
+        p.drawEllipse(QPointF(50, y), 7, 7)
+
+
 def _heightmap(p, ink, accent):
     """A row of probe points under the bowed surface they measured."""
     _pen(p, ink, 6)
@@ -285,6 +297,7 @@ GLYPHS = {
     "load_gerber": _gerber,
     "load_excellon": _excellon,
     "load_heightmap": _heightmap,
+    "alignment_holes": _alignment,
     "region": _region,
     "isolate": _isolate,
     "clear_copper": _clear,
