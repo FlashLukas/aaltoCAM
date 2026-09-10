@@ -427,6 +427,17 @@ def op_transform(doc, node, source: Payload, reference: Payload = None):
     result = _apply_affine(source, fn)
     result.kind = source.kind
     result.meta = dict(source.meta)
+
+    # Where this layer's own zero ended up. A layer moved aside to sit beside
+    # the other side of the board is re-zeroed there on the machine, so that
+    # point is what the operator keys in -- worth marking on the view rather
+    # than leaving them to work it out from the offsets. Carried through the
+    # source's own origin, so a chain of transforms composes correctly.
+    moved = fn(Point(*source.meta.get("origin", (0.0, 0.0))))
+    if abs(moved.x) > 1e-9 or abs(moved.y) > 1e-9:
+        result.meta["origin"] = (moved.x, moved.y)
+    else:
+        result.meta.pop("origin", None)
     return result
 
 

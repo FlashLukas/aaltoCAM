@@ -27,6 +27,7 @@ GRID = QColor("#232B36")
 GRID_FINE = QColor("#1A202A")
 AXIS = QColor("#39485C")          # the two lines through zero, under the board
 ORIGIN = QColor("#F0EDE6")        # the marker at zero, over everything
+ORIGIN_SECOND = QColor("#9AA6B4")  # a layer's own zero after it was moved aside
 MEASURE = QColor("#F2C14E")
 MEASURE_DIM = QColor(242, 193, 78, 120)
 LABEL_BG = QColor(9, 12, 16, 216)
@@ -142,13 +143,35 @@ class BoardView(QGraphicsView):
         self._paint_measure(painter)
         painter.restore()
 
+    def set_extra_origins(self, origins):
+        """Secondary zeroes to mark, as [(x, y, label), ...].
+
+        A layer moved aside to sit beside the other side of the board is
+        re-zeroed there on the machine, so that point is a real origin the
+        operator will key in -- not a drawing convenience. It is drawn dimmer
+        than the machine zero because there is only ever one of those.
+        """
+        self._extra_origins = list(origins)
+        self.viewport().update()
+
+    def extra_origins(self):
+        return list(getattr(self, "_extra_origins", []))
+
+    def centre_on(self, x: float, y: float):
+        self.centerOn(QPointF(x, y))
+
     def _paint_origin(self, painter):
-        centre = self.mapFromScene(QPointF(0.0, 0.0))
+        self._paint_one_origin(painter, 0.0, 0.0, ORIGIN, "")
+        for x, y, label in getattr(self, "_extra_origins", []):
+            self._paint_one_origin(painter, x, y, ORIGIN_SECOND, label)
+
+    def _paint_one_origin(self, painter, sx, sy, colour, label):
+        centre = self.mapFromScene(QPointF(sx, sy))
         margin = 30
         area = self.viewport().rect().adjusted(-margin, -margin, margin, margin)
         if not area.contains(centre):
             return
-        pen = QPen(ORIGIN)
+        pen = QPen(colour)
         pen.setWidthF(1.3)
         pen.setCosmetic(True)
         painter.setPen(pen)
@@ -160,6 +183,8 @@ class BoardView(QGraphicsView):
         painter.drawLine(QPointF(x, y - arm), QPointF(x, y - gap))
         painter.drawLine(QPointF(x, y + gap), QPointF(x, y + arm))
         painter.drawEllipse(QPointF(x, y), ring, ring)
+        if label:
+            painter.drawText(QPointF(x + arm + 3, y - 3), label)
 
     # -- measuring ---------------------------------------------------------
 

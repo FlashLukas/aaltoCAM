@@ -47,6 +47,11 @@ from .paramform import ParamForm
 
 RECOMPUTE_DELAY_MS = 180
 
+#: Clearance left between a layer placed aside and everything already on the
+#: bed. Small enough to keep both sides on screen at a working zoom, large
+#: enough that the two never look like one board.
+BESIDE_GAP_MM = 5.0
+
 
 class _NameColumnOnly(QStyledItemDelegate):
     """Editing renames, and only the name column is a name.
@@ -135,6 +140,7 @@ class MainWindow(QMainWindow):
         self.node_list.currentItemChanged.connect(self._on_select)
         self.node_list.itemChanged.connect(self._on_item_changed)
         self._items: dict[str, QTreeWidgetItem] = {}
+        self._origin_focus = 0
         layout.addWidget(self.node_list, 1)
 
         layout.addWidget(self._toolbox())
@@ -297,10 +303,16 @@ class MainWindow(QMainWindow):
         rename = QAction("Rename operation", self)
         rename.setShortcut("F2")
         rename.triggered.connect(self.rename_current)
+        beside = QAction("Place beside the board", self)
+        beside.setShortcut("Ctrl+Shift+B")
+        beside.triggered.connect(self.place_beside)
         edit_menu.addAction(undo)
         edit_menu.addAction(redo)
         edit_menu.addSeparator()
         edit_menu.addAction(rename)
+        # Here rather than under View: it moves the geometry, so it belongs
+        # with the things that change the project, not the camera.
+        edit_menu.addAction(beside)
 
         tools_menu = self.menuBar().addMenu("&Tools")
         edit_tools = QAction("Edit tool library...", self)
@@ -316,6 +328,10 @@ class MainWindow(QMainWindow):
         fit.setShortcut("F")
         fit.triggered.connect(self.view.fit)
         view_menu.addAction(fit)
+        next_origin = QAction("Go to next origin", self)
+        next_origin.setShortcut("O")
+        next_origin.triggered.connect(self.focus_next_origin)
+        view_menu.addAction(next_origin)
         travel = QAction("Show travel moves", self, checkable=True, checked=True)
         travel.triggered.connect(self._toggle_travel)
         view_menu.addAction(travel)
@@ -984,6 +1000,64 @@ class MainWindow(QMainWindow):
         self._apply_name(node, name)
         self.refresh_list(select=node_id)
 
+    def focus_next_origin(self):
+        """Centre the view on the next zero, the machine's included.
+
+        Two sides placed side by side are two working areas, and at a useful
+        zoom only one of them is on screen. This is how you get between them
+        without hunting.
+        """
+        spots = [(0.0, 0.0, "Machine zero")] + self.view.extra_origins()
+        if len(spots) == 1:
+            self.statusBar().showMessage(
+                "Only the machine zero so far. Edit → Place beside the board "
+                "moves a layer aside and gives it one of its own.", 6000)
+            return
+        self._origin_focus = (self._origin_focus + 1) % len(spots)
+        x, y, label = spots[self._origin_focus]
+        self.view.centre_on(x, y)
+        self.statusBar().showMessage(f"{label}   X {x:.3f}   Y {y:.3f}", 5000)
+
+    def place_beside(self):
+        """Move the selected layer clear of the board, with its own zero.
+
+        The offset is real, not a drawing trick: the geometry moves, so the
+        cursor readout, the measuring tool and the G-code all agree, and the
+        layer is milled by zeroing the machine on its new origin.
+        """
+        node = self.current_node()
+        if node is None:
+            self.statusBar().showMessage("Select the layer to move first.", 4000)
+            return
+        result = self.results.get(node.id)
+        mine = ops.payload_bounds(result) if hasattr(result, "kind") else None
+        if mine is None:
+            self.statusBar().showMessage(
+                f"{node.name} has no geometry to place yet.", 4000)
+            return
+
+        # Clear everything on screen rather than just this layer, so the two
+        # working areas cannot overlap whatever else happens to be loaded.
+        right = mine[2]
+        for other_id in self.doc.order:
+            if other_id == node.id or not self.doc.nodes[other_id].visible:
+                continue
+            other = self.results.get(other_id)
+            bounds = ops.payload_bounds(other) if hasattr(other, "kind") else None
+            if bounds is not None:
+                right = max(right, bounds[2])
+
+        shift = right - mine[0] + BESIDE_GAP_MM
+        self.push_undo()
+        moved = self.doc.add("transform", [node.id],
+                             name=f"{node.name} aside", offset_x=shift)
+        self.refresh_list(select=moved.id)
+        self.recompute()
+        self.view.centre_on(shift, 0.0)
+        self.statusBar().showMessage(
+            f"{moved.name} placed at X {shift:.3f} mm. For the other side of "
+            f"the board, set Mirror to 'y' in the panel.", 9000)
+
     def rename_current(self):
         """Start an in-place edit of the selected operation."""
         item = self.node_list.currentItem()
@@ -1188,8 +1262,33 @@ class MainWindow(QMainWindow):
                 self.view.show_drills(node_id, result.data)
             elif result.kind == "heightmap":
                 self.view.show_heightmap(node_id, result.data)
+        self.view.set_extra_origins(self._secondary_origins())
         # clear_all() removed the edit handles; put them back on top.
         self.view.refresh_handles()
+
+    def _secondary_origins(self):
+        """Every zero other than the machine's, one marker per position.
+
+        A whole side -- copper, drills, outline -- is moved by one shared
+        transform, so half a dozen layers land on the same zero. Marking it
+        once keeps the view readable; the label is whichever layer got there
+        first, which is enough to say which side it belongs to.
+        """
+        seen, out = set(), []
+        for node_id in self.doc.order:
+            node = self.doc.nodes[node_id]
+            result = self.results.get(node_id)
+            if not node.visible or not hasattr(result, "meta"):
+                continue
+            spot = result.meta.get("origin")
+            if not spot:
+                continue
+            key = (round(spot[0], 6), round(spot[1], 6))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append((float(spot[0]), float(spot[1]), node.name))
+        return out
 
 
 def dark_palette() -> QPalette:

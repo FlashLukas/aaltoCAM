@@ -402,6 +402,31 @@ already picked and re-references it to zero rather than throwing it away.
 Middle-drag pans in every mode, including while measuring or drawing a region
 — a mode you cannot pan out of is a trap.
 
+## Both sides at once
+
+**Edit → Place beside the board** (Ctrl+Shift+B) moves the selected layer clear
+of everything already on the bed and gives it a working area of its own, so the
+two sides of a board can be seen and worked on together. Set **Mirror** to `y`
+on the Transform it creates and the second area is the bottom side.
+
+![Top and bottom side by side, each with its own zero](docs/screenshots/two-sided.png)
+
+The offset is real geometry, not a drawing trick. The cursor readout, the
+measuring tool and the G-code all agree with what is on screen, and the layer is
+milled by zeroing the machine on its new origin — which is marked, dimmer than
+the machine zero, because there is only ever one of those. After a mirror that
+marker moves to the other corner, which is the point: it is showing where zero
+actually is once the board is flipped, not where it used to be.
+
+**View → Go to next origin** (`O`) cycles the view between them. At a working
+zoom only one area is on screen at a time, and hunting for the other is
+tedious.
+
+A whole side — copper, drills, outline — driven through one shared Transform
+lands on one shared zero, so the marker appears once rather than once per
+layer. That is the same shared-reference discipline described below, and the
+reason to keep it.
+
 ## Positioning and registration
 
 **Transform** moves a layer to the origin: pick which corner of the
