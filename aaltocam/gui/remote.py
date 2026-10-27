@@ -17,6 +17,7 @@ did not want is Ctrl+Z away, exactly like a change made by hand.
 
 from __future__ import annotations
 
+import math
 import queue
 import time
 
@@ -58,7 +59,46 @@ class Bridge:
                             "error": f"{type(exc).__name__}: {exc}"})
 
 
-def _node_state(window, node_id: str) -> dict:
+#: Bounds on what a reply will carry out of a nested value.
+MAX_DEPTH = 6
+MAX_ITEMS = 2000
+
+
+def _jsonable(value, depth: int = 0):
+    """Whatever of this survives JSON, with anything else described instead.
+
+    What this replaces tested the container and not its contents, so a list of
+    Shapely geometry -- a rest-machining job's tool groups -- passed the check
+    as "a list" and then raised inside json.dumps. By then the handler had
+    committed to a reply, so the connection dropped and the caller saw
+    RemoteDisconnected and nothing else. A value that cannot cross the wire
+    should say so in the reply, not take the reply with it.
+    """
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else repr(value)
+    if depth >= MAX_DEPTH:
+        return f"<{type(value).__name__}>"
+    if isinstance(value, (list, tuple)):
+        out = [_jsonable(item, depth + 1) for item in value[:MAX_ITEMS]]
+        if len(value) > MAX_ITEMS:
+            out.append(f"<{len(value) - MAX_ITEMS} more>")
+        return out
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v, depth + 1)
+                for k, v in list(value.items())[:MAX_ITEMS]}
+    return f"<{type(value).__name__}>"
+
+
+def _node_state(window, node_id: str, params: bool = True) -> dict:
+    """One node, as JSON.
+
+    `list` leaves the parameters out and `get` puts them back. A region drawn
+    to mask rest machining can hold a couple of hundred polygons, so a listing
+    of such a project was several megabytes of coordinates that the caller
+    almost never wanted -- and asking for one node is cheap.
+    """
     node = window.doc.nodes[node_id]
     result = window.results.get(node_id)
     state = {
@@ -67,14 +107,16 @@ def _node_state(window, node_id: str) -> dict:
         "name": node.name,
         "inputs": list(node.inputs),
         "visible": node.visible,
-        "params": dict(node.params),
     }
+    if params:
+        state["params"] = _jsonable(dict(node.params))
+    else:
+        state["param_names"] = sorted(node.params)
     if isinstance(result, Exception):
         state["error"] = str(result)
     elif result is not None:
         state["kind"] = result.kind
-        state["meta"] = {k: v for k, v in result.meta.items()
-                         if isinstance(v, (int, float, str, bool, list, tuple))}
+        state["meta"] = _jsonable(dict(result.meta))
         bounds = ops.payload_bounds(result)
         if bounds:
             state["bounds"] = [round(v, 4) for v in bounds]
@@ -108,7 +150,8 @@ class Commands:
             for name, operation in sorted(REGISTRY.items())]}
 
     def do_list(self, _c):
-        return {"ok": True, "nodes": [_node_state(self.window, n)
+        """Every node, without its parameters. Use `get` for one node's."""
+        return {"ok": True, "nodes": [_node_state(self.window, n, params=False)
                                       for n in self.window.doc.order]}
 
     def do_get(self, command):

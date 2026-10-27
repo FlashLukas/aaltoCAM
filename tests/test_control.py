@@ -316,6 +316,111 @@ def test_operations_lists_what_can_be_added(driven):
     assert {"isolate", "cnc_job", "mill_slots", "alignment_holes"} <= ops_by_name
 
 
+# --- replies that have to survive the wire -------------------------------------
+
+def test_geometry_in_a_result_does_not_take_the_reply_with_it(driven):
+    """The bug this guards: a rest-machining job's meta carries its tool
+    groups as lists of Shapely LineStrings. A filter that tested the container
+    and not its contents let them through as 'a list', json.dumps raised after
+    the handler had committed to replying, and the caller saw the connection
+    drop with nothing to go on."""
+    window, commands = driven
+    commands.run({"command": "open", "path": DEMO})
+    node = window.doc.add("clear_copper", ["load_gerber_1"], name="Clearing")
+    window.refresh_list()
+    window.recompute()
+
+    answer = commands.run({"command": "get", "id": node.id})
+    json.dumps(answer)                              # must not raise
+    groups = answer["node"]["meta"].get("groups")
+    if groups:
+        assert "LineString" in json.dumps(groups)   # described, not carried
+
+
+def test_every_reply_from_a_real_project_serialises(driven):
+    window, commands = driven
+    commands.run({"command": "open", "path": DEMO})
+    json.dumps(commands.run({"command": "list"}))
+    for node_id in list(window.doc.order):
+        json.dumps(commands.run({"command": "get", "id": node_id}))
+
+
+def test_list_leaves_the_parameters_out(driven):
+    """A region masking rest machining holds hundreds of polygons; a listing
+    carrying all of them is megabytes the caller almost never wanted."""
+    _, commands = driven
+    commands.run({"command": "open", "path": DEMO})
+    listed = commands.run({"command": "list"})
+    for node in listed["nodes"]:
+        assert "params" not in node
+        assert isinstance(node["param_names"], list)
+
+
+def test_get_still_gives_the_parameters(driven):
+    _, commands = driven
+    commands.run({"command": "open", "path": DEMO})
+    node = commands.run({"command": "get", "id": "isolate_1"})["node"]
+    assert node["params"]["passes"] >= 1
+
+
+def test_a_listing_stays_small(driven):
+    _, commands = driven
+    commands.run({"command": "open", "path": DEMO})
+    assert len(json.dumps(commands.run({"command": "list"}))) < 100_000
+
+
+@pytest.mark.parametrize("value, expected", [
+    (None, None), (True, True), (3, 3), ("x", "x"), (1.5, 1.5),
+    ([1, [2, [3]]], [1, [2, [3]]]),
+    ({"a": 1}, {"a": 1}),
+])
+def test_plain_values_pass_through_unchanged(value, expected):
+    assert remote._jsonable(value) == expected
+
+
+def test_an_unknown_type_is_described_rather_than_carried():
+    assert remote._jsonable(object()) == "<object>"
+    assert remote._jsonable({"k": object()}) == {"k": "<object>"}
+
+
+def test_a_long_list_is_truncated_and_says_so():
+    out = remote._jsonable(list(range(remote.MAX_ITEMS + 500)))
+    assert len(out) == remote.MAX_ITEMS + 1
+    assert "500 more" in out[-1]
+
+
+def test_deep_nesting_stops_rather_than_recursing_forever():
+    deep = value = []
+    for _ in range(50):
+        inner = []
+        value.append(inner)
+        value = inner
+    json.dumps(remote._jsonable(deep))              # must not blow the stack
+
+
+def test_infinities_are_not_emitted_as_bare_json(driven):
+    """NaN and inf are not JSON, however willingly Python writes them."""
+    assert remote._jsonable(float("inf")) == "inf"
+    assert remote._jsonable(float("nan")) == "nan"
+
+
+def test_an_unserialisable_reply_answers_rather_than_dropping(tmp_path, monkeypatch):
+    """Even with the filter in place, the transport must not die silently."""
+    monkeypatch.setattr(settings, "config_path",
+                        lambda: str(tmp_path / "settings.toml"))
+    srv = control.ControlServer(lambda _c: {"ok": True, "thing": object()})
+    srv.start()
+    try:
+        status, body = post(srv.port, {"command": "ping"}, srv.token)
+        assert status == 500
+        assert body["ok"] is False
+        assert "could not be serialised" in body["error"]
+        # And it is still answering afterwards.
+        assert post(srv.port, {"command": "ping"}, srv.token)[0] == 500
+    finally:
+        srv.stop()
+
+
 # --- the bridge ----------------------------------------------------------------
 
 def test_a_command_from_another_thread_waits_for_the_window(driven):
