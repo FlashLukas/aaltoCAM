@@ -19,7 +19,7 @@ from . import tools as toollib
 
 THEMES = ("dark", "light")
 
-DEFAULTS = {"theme": "dark"}
+DEFAULTS = {"theme": "dark", "control": False}
 
 
 def config_path() -> str:

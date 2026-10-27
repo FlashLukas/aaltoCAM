@@ -108,6 +108,49 @@ producing an empty project. Filename matching covers KiCad, Altium and
 Eagle conventions. **File → Open KiCad board...** (Ctrl+Shift+K) skips the
 plot step entirely — see below.
 
+## Driving the window from a script
+
+**Tools → Allow local control** opens a socket another program on this machine
+can use to read the project, set parameters, add operations and export jobs,
+while you carry on clicking. It is for automating the tedious half of a job —
+setting twenty parameters, wiring a second side, exporting six files — without
+giving up the GUI.
+
+```python
+from aaltocam.core.control import send
+
+send({"command": "list"})
+send({"command": "set", "id": "isolate_1", "params": {"passes": 3}})
+send({"command": "export", "id": "cnc_job_1", "path": "out/top.nc"})
+```
+
+The verbs are `ping`, `operations`, `list`, `get`, `gcode`, `set`, `add`,
+`connect`, `rename`, `delete`, `visible`, `undo`, `evaluate`, `export`, `save`
+and `open`. `operations` lists what can be added and the parameters each takes,
+so a caller can discover the rest without this document.
+
+Four things make it reasonable to have at all, and the transport is not one of
+them:
+
+- **Nothing listens until you switch it on**, and the title bar says
+  `[control]` for as long as it does. A window that can be driven from outside
+  should never look like one that cannot.
+- **It binds the loopback address only** and refuses any caller that is not on
+  this machine.
+- **Every request carries a token**, generated fresh each time it starts and
+  written beside the tool library. A program that cannot read that file cannot
+  issue a command. Stopping removes the file.
+- **No verb executes code.** The vocabulary is fixed and every verb maps onto
+  something the GUI already does, so the worst a wrong command can produce is a
+  wrong toolpath — on screen, and undoable with Ctrl+Z like any other edit. A
+  test asserts that neither module contains an `eval`, an `exec` or a
+  subprocess, because that property is the whole argument and it should fail
+  loudly if it ever stops being true.
+
+Commands arrive on the socket's own thread and are run on the GUI thread by a
+timer. Touching the document from the socket thread would corrupt it in ways
+that surface much later as something apparently unrelated.
+
 ## How it fits together
 
 ```

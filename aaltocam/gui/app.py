@@ -40,10 +40,12 @@ from ..core import REGISTRY, Document, ops
 from ..core import discover
 from ..core import kicad
 from ..core import tools as toollib
+from ..core import control
 from ..core import project as project_io
 from ..core import settings
 from . import canvas
 from . import icons
+from . import remote
 from .canvas import BoardView
 from .paramform import ParamForm
 
@@ -104,6 +106,17 @@ class MainWindow(QMainWindow):
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.recompute)
 
+        # The control channel, built but not listening. Commands arrive on a
+        # socket thread and are run here, on the GUI thread, by this timer --
+        # touching the document from the socket thread would corrupt it in
+        # ways that surface much later as something unrelated.
+        self._commands = remote.Commands(self)
+        self._bridge = remote.Bridge()
+        self._control = control.ControlServer(self._bridge.submit)
+        self._control_pump = QTimer(self)
+        self._control_pump.timeout.connect(
+            lambda: self._bridge.pump(self._commands.run))
+
         self.view.shape_drawn.connect(self._on_shape_drawn)
         self.view.shapes_edited.connect(self._on_shapes_edited)
         self.view.draw_finished.connect(
@@ -111,6 +124,12 @@ class MainWindow(QMainWindow):
         self.view.cursor_moved.connect(self._show_cursor)
         self.view.measured.connect(self._show_measure)
         self.statusBar().showMessage("New project. Add a Gerber file to start.")
+
+        # Remembered from last time, like the theme. Quietly, because the
+        # title bar is the thing that has to say it, not a message that
+        # scrolls away.
+        if settings.load().get("control"):
+            self.set_control(True, quiet=True)
 
     # -- docks -------------------------------------------------------------
 
@@ -328,6 +347,15 @@ class MainWindow(QMainWindow):
         reload_tools.triggered.connect(self.reload_tool_library)
         tools_menu.addAction(reload_tools)
 
+        tools_menu.addSeparator()
+        self._control_action = QAction("Allow local control", self, checkable=True)
+        self._control_action.setToolTip(
+            "Let a program on this machine drive this window: read the graph, "
+            "set parameters, add operations, export jobs. Loopback only, and "
+            "it needs the token written beside the tool library.")
+        self._control_action.toggled.connect(self.set_control)
+        tools_menu.addAction(self._control_action)
+
         view_menu = self.menuBar().addMenu("&View")
         fit = QAction("Fit to board", self)
         fit.setShortcut("F")
@@ -374,7 +402,12 @@ class MainWindow(QMainWindow):
     def _update_title(self):
         name = os.path.basename(self.path) if self.path else (self._subject or "")
         star = "*" if self._dirty else ""
-        self.setWindowTitle(f"aaltocam{' - ' + name if name else ''}{star}")
+        # A window that can be driven from outside must not look like one that
+        # cannot. This is the only place that says so while you are working.
+        driven = "  [control]" if getattr(self, "_control", None) \
+            and self._control.running else ""
+        self.setWindowTitle(
+            f"aaltocam{' - ' + name if name else ''}{star}{driven}")
 
     def _mark(self, dirty=True, subject=None):
         """Record whether there is unsaved work, and retitle the window."""
@@ -677,6 +710,11 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         if self._confirm_discard("Quit"):
+            # Close the socket and remove the handshake file, so nothing is
+            # left listening and nothing points at a port that has gone.
+            if self._control.running:
+                self._control_pump.stop()
+                self._control.stop()
             event.accept()
         else:
             event.ignore()
@@ -1016,6 +1054,38 @@ class MainWindow(QMainWindow):
         self.push_undo()
         self._apply_name(node, name)
         self.refresh_list(select=node_id)
+
+    # -- the control channel ------------------------------------------------
+
+    def set_control(self, on: bool, quiet: bool = False):
+        """Open or close the local control socket.
+
+        Nothing listens until this is called. While it is listening the title
+        bar says so, because a window that can be driven from outside should
+        never look like one that cannot.
+        """
+        if on and not self._control.running:
+            try:
+                port = self._control.start()
+            except OSError as exc:
+                QMessageBox.warning(self, "Could not start the control channel",
+                                    str(exc))
+                self._control_action.setChecked(False)
+                return
+            self._control_pump.start(50)
+            if not quiet:
+                self.statusBar().showMessage(
+                    f"Control channel listening on 127.0.0.1:{port}. The port "
+                    f"and token are in {control.handshake_path()}", 12000)
+        elif not on and self._control.running:
+            self._control_pump.stop()
+            self._control.stop()
+            if not quiet:
+                self.statusBar().showMessage("Control channel closed.", 6000)
+
+        self._control_action.setChecked(self._control.running)
+        settings.save({**settings.load(), "control": self._control.running})
+        self._update_title()
 
     def choose_theme(self, name: str):
         """Record the theme. It is worn at the next start, not this one.
