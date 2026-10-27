@@ -53,9 +53,36 @@ def _sweep(center, start, end, clockwise):
     return delta
 
 
+def _max_chord(radius, tolerance):
+    """Longest chord of this circle that stays within tolerance of its arc.
+
+    From the sagitta, the gap between a chord and the arc it subtends:
+    ``s = r - sqrt(r^2 - (d/2)^2)``. Requiring ``s <= tolerance`` and solving
+    for d gives ``d <= 2*sqrt(2*r*t - t^2)``.
+    """
+    return 2.0 * math.sqrt(max(2.0 * radius * tolerance - tolerance * tolerance, 0.0))
+
+
 def _fits(points, center, radius, tolerance):
+    """Every point on the circle, and every segment close enough to it too.
+
+    Checking the points alone is not enough, and the gap is not academic. The
+    input is a polyline: between two of its points the path is a straight
+    chord, and replacing that chord with an arc moves the cut by the sagitta.
+    Three points 0.05 mm apart followed by one 66 mm away all sit exactly on a
+    168 mm circle, so the window was accepted and the board edge came out
+    bowed 3.2 mm -- geometry that is perfectly circular, passes every check
+    here, and is nowhere near the line that was asked for.
+
+    So each segment is checked as well. The arc has to approximate the path,
+    not merely pass through its corners.
+    """
     for point in points:
         if abs(math.dist(center, point) - radius) > tolerance:
+            return False
+    longest = _max_chord(radius, tolerance)
+    for a, b in zip(points, points[1:]):
+        if math.dist(a, b) > longest:
             return False
     return True
 
