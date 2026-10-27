@@ -104,6 +104,26 @@ def test_a_missing_token_is_refused(server):
     assert status == 403
 
 
+def test_a_refusal_reaches_the_caller_every_time(server):
+    """A refusal has to survive the connection closing, not usually survive it.
+
+    Refusing returned without reading the request body, which left it in the
+    receive buffer; closing a socket with data still in it makes Windows
+    reset the connection, and the reset threw away the 403 that had just
+    been written. The caller got ConnectionAbortedError and no reason at
+    all -- the same failure as a reply that cannot be serialised, by a
+    different route.
+
+    It lost about three refusals in a hundred, which is why it showed up as
+    this file failing now and then on a different test each time rather than
+    as a bug. One request would never have caught it; this asks repeatedly.
+    """
+    for _ in range(200):
+        status, body = post(server.port, {"command": "ping"}, "not-the-token")
+        assert status == 403
+        assert "token" in body["error"]
+
+
 def test_the_token_is_long_enough_to_be_worth_having(server):
     assert len(server.token) >= 32
 

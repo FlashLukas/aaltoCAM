@@ -85,7 +85,38 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, *_args):
         """Quiet. The window's status bar is the place for this."""
 
+    #: How much of an unwanted request body is worth reading just to be able
+    #: to answer it. Well above MAX_BODY, because the point is to get the
+    #: refusal delivered, not to accept the body.
+    DRAIN_LIMIT = 8 << 20
+
+    def _drain(self):
+        """Read the body of a request we are refusing without looking at.
+
+        A refusal that replies and returns leaves the body unread in the
+        receive buffer, and closing a socket with data still in it makes
+        Windows answer with an RST -- which discards the reply the server has
+        just written. A caller with a wrong token saw its connection abort
+        and got no reason at all, which is the same failure as a reply that
+        cannot be serialised, arriving by a different route. So read the body
+        and throw it away, and the refusal gets through.
+        """
+        if getattr(self, "_drained", False):
+            return
+        self._drained = True
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            return
+        remaining = min(length, self.DRAIN_LIMIT)
+        while remaining > 0:
+            chunk = self.rfile.read(min(remaining, 65536))
+            if not chunk:
+                return
+            remaining -= len(chunk)
+
     def _reply(self, code: int, payload: dict):
+        self._drain()
         try:
             body = json.dumps(payload).encode("utf-8")
         except (TypeError, ValueError) as exc:
@@ -104,6 +135,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
+        self._drained = False
         # Belt and braces: the socket is bound to loopback already, but a
         # second check costs nothing and documents the intent.
         if self.client_address[0] not in ("127.0.0.1", "::1"):
@@ -124,6 +156,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         try:
+            self._drained = True        # this read is the body
             command = json.loads(self.rfile.read(length).decode("utf-8"))
         except (ValueError, UnicodeDecodeError) as exc:
             self._reply(400, {"ok": False, "error": f"not JSON: {exc}"})
