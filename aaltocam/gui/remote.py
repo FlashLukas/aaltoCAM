@@ -25,7 +25,13 @@ from ..core import REGISTRY, ops
 from ..core import project as project_io
 
 #: How long a caller waits for the GUI thread to come round to its request.
-TIMEOUT_S = 20.0
+#:
+#: Generous, because evaluation is synchronous: a real board with rest
+#: machining on it takes half a minute to recompute, and the window is frozen
+#: for all of it, so nothing can answer. Twenty seconds timed out on opening a
+#: 39-node job that then finished perfectly well -- a command that works while
+#: reporting failure is worse than one that fails.
+TIMEOUT_S = 300.0
 
 
 class Bridge:
@@ -41,8 +47,13 @@ class Bridge:
         try:
             return answer.get(timeout=TIMEOUT_S)
         except queue.Empty:
-            return {"ok": False,
-                    "error": f"the window did not answer within {TIMEOUT_S:g} s"}
+            # Say what is actually known. The command was handed over and may
+            # well still be running; claiming it failed invites a caller to
+            # retry something that is halfway done.
+            return {"ok": False, "timeout": True,
+                    "error": f"the window has not answered within {TIMEOUT_S:g} s. "
+                             f"The command may still be running -- check with "
+                             f"ping or list before sending it again."}
 
     def pump(self, run):
         """Called on the GUI thread by a timer. Runs whatever is waiting."""

@@ -451,4 +451,5 @@ def test_a_window_that_never_answers_times_out_rather_than_hanging():
         answer = bridge.submit({"command": "ping"})
     finally:
         remote.TIMEOUT_S = original
-    assert answer["ok"] is False and "did not answer" in answer["error"]
+    assert answer["ok"] is False and answer["timeout"] is True
+    assert "may still be running" in answer["error"]
