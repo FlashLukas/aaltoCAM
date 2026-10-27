@@ -6,7 +6,7 @@ import os
 import sys
 import time
 
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import QSize, QThread, Qt, QTimer, Signal
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import (QAction, QActionGroup, QColor, QDesktopServices,
                            QFont, QKeySequence, QPalette)
@@ -71,6 +71,33 @@ class _NameColumnOnly(QStyledItemDelegate):
         return super().createEditor(parent, option, index)
 
 
+class _Evaluator(QThread):
+    """Evaluates a copy of the document away from the GUI thread.
+
+    It holds its own `Document`, not the window's, so an edit made while it
+    runs cannot change the graph underneath it mid-evaluation. What comes
+    back includes the cache it filled, which the window merges into the live
+    document: the expensive results are then reusable by the next run, which
+    is what keeps editing a large board responsive rather than merely
+    non-blocking.
+
+    Nothing here touches a widget. The only way out is the signal.
+    """
+
+    #: generation, results, cache, cache keys
+    done = Signal(int, object, object, object)
+
+    def __init__(self, generation: int, doc):
+        super().__init__()
+        self.generation = generation
+        self.doc = doc
+
+    def run(self):
+        results = self.doc.evaluate_all()
+        self.done.emit(self.generation, results,
+                       dict(self.doc._cache), dict(self.doc._keys))
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -104,7 +131,14 @@ class MainWindow(QMainWindow):
 
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
-        self.timer.timeout.connect(self.recompute)
+        self.timer.timeout.connect(self.start_recompute)
+
+        # Evaluation runs on a worker thread. The counter says which run is
+        # the current one, so a result that arrives after a later edit is
+        # dropped instead of painting stale geometry over fresh.
+        self._eval_generation = 0
+        self._eval_started = 0.0
+        self._workers: list[_Evaluator] = []
 
         # The control channel, built but not listening. Commands arrive on a
         # socket thread and are run here, on the GUI thread, by this timer --
@@ -715,6 +749,14 @@ class MainWindow(QMainWindow):
             if self._control.running:
                 self._control_pump.stop()
                 self._control.stop()
+            # Nothing can interrupt a half-finished evaluation, and letting
+            # Python exit while one is running crashes on the way out. Drop
+            # the results and wait for the thread rather than take that.
+            self._eval_generation += 1
+            for worker in list(self._workers):
+                if worker.isRunning():
+                    self.statusBar().showMessage("Finishing evaluation...")
+                    worker.wait()
             event.accept()
         else:
             event.ignore()
@@ -1291,6 +1333,15 @@ class MainWindow(QMainWindow):
         self.timer.start(RECOMPUTE_DELAY_MS)
 
     def recompute(self):
+        """Evaluate now, on this thread, and apply the result before returning.
+
+        Kept for callers that have asked for an answer and are waiting on it:
+        the control channel, and anything that reads `results` on the next
+        line. Typing in the panel goes through `schedule`, which does not
+        block the window.
+        """
+        self.timer.stop()
+        self._eval_generation += 1      # supersede anything already running
         start = time.perf_counter()
         QApplication.setOverrideCursor(Qt.BusyCursor)
         try:
@@ -1303,11 +1354,67 @@ class MainWindow(QMainWindow):
                 self.results = self.doc.evaluate_all()
         finally:
             QApplication.restoreOverrideCursor()
-        elapsed = (time.perf_counter() - start) * 1000
-        self.redraw()
+        self._apply_results((time.perf_counter() - start) * 1000)
 
+    # -- evaluating without freezing the window ----------------------------
+
+    def start_recompute(self):
+        """Evaluate on a worker thread and apply the result when it lands.
+
+        A real board with rest machining takes half a minute, and until now
+        the window was unusable for all of it -- no panning, no reading the
+        G-code, no cancelling the edit that started it.
+
+        The worker gets a copy of the document rather than the live one, so
+        editing while it runs cannot change what it is evaluating underneath
+        itself. The content-hash cache is carried into the copy and merged
+        back afterwards, so an edit still re-evaluates only what depends on
+        it: without that, moving to a thread would have traded a frozen
+        window for a full rebuild on every keystroke.
+
+        Each run carries a generation number. An edit during a run starts a
+        newer one, and the older result is discarded when it arrives rather
+        than overwriting fresher geometry with staler.
+        """
+        self._eval_generation += 1
+        generation = self._eval_generation
+
+        snapshot = Document.from_dict(self.doc.to_dict())
+        snapshot.base_dir = self.doc.base_dir
+        snapshot._cache = dict(self.doc._cache)
+        snapshot._keys = dict(self.doc._keys)
+
+        worker = _Evaluator(generation, snapshot)
+        worker.done.connect(self._evaluation_done)
+        # Held so Qt does not collect a running thread, and so close can wait.
+        self._workers.append(worker)
+        worker.finished.connect(lambda w=worker: self._workers.remove(w)
+                                if w in self._workers else None)
+        self._eval_started = time.perf_counter()
+        self.statusBar().showMessage("Evaluating...")
+        worker.start()
+
+    def _evaluation_done(self, generation, results, cache, keys):
+        if generation != self._eval_generation:
+            return          # superseded; a newer run is already on its way
+        self.doc._cache.update(cache)
+        self.doc._keys.update(keys)
+        self.results = results
+        self._apply_results((time.perf_counter() - self._eval_started) * 1000)
+        # A CNC job usually learns its cutter from the geometry above it,
+        # which is only known once that geometry has been evaluated. Bring
+        # its fields into line and go round again -- off the GUI thread as
+        # well, and cheaply, since the geometry is now cached. The sync is
+        # idempotent, so the second pass does not ask for a third.
+        if self._adopt_inherited_tools():
+            self.start_recompute()
+
+    def _apply_results(self, elapsed_ms: float):
+        """Draw, report and update the panel from whatever is in `results`."""
+        self.redraw()
         errors = [f"{self.doc.nodes[k].name}: {v}"
-                  for k, v in self.results.items() if isinstance(v, Exception)]
+                  for k, v in self.results.items()
+                  if isinstance(v, Exception) and k in self.doc.nodes]
         node = self.current_node()
         if node is not None:
             result = self.results.get(node.id)
@@ -1316,7 +1423,7 @@ class MainWindow(QMainWindow):
         if errors:
             self.statusBar().showMessage(errors[0])
         else:
-            self.statusBar().showMessage(f"Evaluated in {elapsed:.0f} ms")
+            self.statusBar().showMessage(f"Evaluated in {elapsed_ms:.0f} ms")
         if node is not None and not errors:
             self._show_stats(node)
 
