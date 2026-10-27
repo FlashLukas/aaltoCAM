@@ -683,9 +683,9 @@ Honest list, since this is one build rather than years of accumulation:
 - No panelising of different boards together, no film or solder-paste output,
   no design-rule check beyond the isolation clearance check.
 - No film, QR, solder-paste, panel-marker, calibration or rules-check tools.
-- Evaluation is synchronous. A board taking several seconds will block the
-  window during recompute. Moving evaluation onto a worker thread is the
-  obvious next change.
+- Evaluation cannot be cancelled. It runs on a worker thread, so the window
+  stays live while a slow board recomputes, but a run that has started
+  finishes: there is no stop button, and quitting waits for it.
 
 ## The Wegstr postprocessor
 
