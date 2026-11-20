@@ -249,9 +249,9 @@ across boards. **Tools → Edit tool library** opens it, **Reload tool library**
 
 `examples/tools/wegstr-lpkf.toml` is a complete library for a real Wegstr with
 LPKF and Wegstr cutters, with part numbers for reordering. Point
-`AALTOCAM_TOOLS` at it to try it without touching your own. With it,
-`examples/wegstr_job.py` takes a board to checked Wegstr G-code in one command,
-with a library tool chosen for every job. [docs/wegstr-claude-code.md](docs/wegstr-claude-code.md)
+`AALTOCAM_TOOLS` at it to try it without touching your own.
+`examples/wegstr_job.py` uses it by default and takes a board to checked
+Wegstr G-code in one command, with a library tool chosen for every job. [docs/wegstr-claude-code.md](docs/wegstr-claude-code.md)
 explains that workflow to a coding agent, so it can do the whole run and hand the
 operator the files.
 

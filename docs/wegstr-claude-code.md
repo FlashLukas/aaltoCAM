@@ -52,14 +52,32 @@ Check with `python -c "import aaltocam; print(aaltocam.__version__)"`.
 ### 2. Use the Wegstr tool library
 
 `examples/tools/wegstr-lpkf.toml` holds the cutters of one real Wegstr setup.
-Point aaltoCAM at it for the session:
+`examples/wegstr_job.py` uses it automatically, and its report starts with a
+`tools:` line naming the file. Check that line. Pass `--tools <file>` only if
+the person has their own library with the same ids.
+
+Do not rely on setting `AALTOCAM_TOOLS` in one shell command and running
+aaltoCAM in the next. If each of your commands starts a fresh shell, the
+variable is gone by then.
+
+**For the GUI and the plain `aaltocam` command**, which do not go through the
+script, install the library once as the default. It lives at
+`%APPDATA%\aaltocam\tools.toml` on Windows and `~/.config/aaltocam/tools.toml`
+elsewhere. If a file is already there, ask the person before replacing it, and
+keep a copy:
 
 ```
 # PowerShell
-$env:AALTOCAM_TOOLS = "<clone>\examples\tools\wegstr-lpkf.toml"
-# bash
-export AALTOCAM_TOOLS=<clone>/examples/tools/wegstr-lpkf.toml
+$dir = "$env:APPDATA\aaltocam"
+New-Item -ItemType Directory -Force $dir | Out-Null
+if (Test-Path "$dir\tools.toml") { Copy-Item "$dir\tools.toml" "$dir\tools.toml.bak" }
+Copy-Item "<clone>\examples\tools\wegstr-lpkf.toml" "$dir\tools.toml"
 ```
+
+After that, `aaltocam-gui <board>-top.toml` shows the same tools the script
+used. If the GUI is already open, use **Tools → Reload tool library**. Without
+this step the GUI falls back to its built-in seed library. That library has no
+`router-0.6`, so a cutout using it shows no tool.
 
 The jobs below use these tools. Their feeds were measured on boards cut on that
 machine:

@@ -11,9 +11,9 @@ the clearance check finds a short or a job leaves the machine's envelope.
 
 It writes files and nothing else. It never talks to the machine.
 
-Defaults are the tools in examples/tools/wegstr-lpkf.toml that carry measured
-feeds. Run with AALTOCAM_TOOLS pointing at that file, or with the same ids in
-your own library.
+The tool library is examples/tools/wegstr-lpkf.toml, beside this script,
+unless --tools names another file or AALTOCAM_TOOLS is already set. The report
+says which file was used.
 """
 
 from __future__ import annotations
@@ -23,9 +23,34 @@ import os
 import re
 import sys
 
-from aaltocam.core import discover, kicad, ops
-from aaltocam.core import project as project_io
-from aaltocam.core import tools as toollib
+BUNDLED_TOOLS = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "tools", "wegstr-lpkf.toml")
+
+
+def _pick_library(argv) -> None:
+    """Choose the tool library before aaltocam is imported.
+
+    The library is read when the operations module loads -- the tool choices
+    are built at import time -- so the path has to be in the environment
+    before then. An environment variable set by an earlier shell command does
+    not reach this process when an agent runs each command in a fresh shell,
+    which is why the default is a file next to this script, not a setting.
+    """
+    for i, arg in enumerate(argv):
+        if arg == "--tools" and i + 1 < len(argv):
+            os.environ["AALTOCAM_TOOLS"] = os.path.abspath(argv[i + 1])
+            return
+        if arg.startswith("--tools="):
+            os.environ["AALTOCAM_TOOLS"] = os.path.abspath(arg.split("=", 1)[1])
+            return
+    os.environ.setdefault("AALTOCAM_TOOLS", BUNDLED_TOOLS)
+
+
+_pick_library(sys.argv[1:])
+
+from aaltocam.core import discover, kicad, ops  # noqa: E402
+from aaltocam.core import project as project_io  # noqa: E402
+from aaltocam.core import tools as toollib  # noqa: E402
 
 ENVELOPE = (140.0, 200.0)       # Wegstr X, Y travel in mm
 
@@ -46,7 +71,7 @@ def need(tool_id: str) -> toollib.Tool:
     if tool is None:
         raise SystemExit(
             f"tool '{tool_id}' is not in the library at {toollib.library().path}. "
-            f"Set AALTOCAM_TOOLS to examples/tools/wegstr-lpkf.toml or pass another id.")
+            f"Pass --tools with a library that has it, or choose another id.")
     return tool
 
 
@@ -197,6 +222,9 @@ def main(argv=None):
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("board", help=".kicad_pcb, or a folder of plotted Gerbers")
     parser.add_argument("-o", "--outdir", default="gcode")
+    parser.add_argument("--tools", default=None,
+                        help="tool library to use (default: AALTOCAM_TOOLS if set, else "
+                             "examples/tools/wegstr-lpkf.toml beside this script)")
     parser.add_argument("--side", default="top", choices=("top", "bottom"))
     parser.add_argument("--isolation-tool", default="lpkf-rf-0.15")
     parser.add_argument("--passes", type=int, default=2,
@@ -231,6 +259,7 @@ def main(argv=None):
         drills = [t.diameter for t in toollib.library().tools if t.kind == "drill"]
         args.mill_above = round(max(drills, default=2.0) + 0.05, 3)
 
+    print(f"tools: {toollib.library().path}")
     doc, notes = build(args)
     for note in notes:
         print(f"note: {note}")
