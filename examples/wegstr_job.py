@@ -70,6 +70,15 @@ def choose_tools(doc, args):
             node.params["gaps"] = args.tabs
         ops.sync_tool_params(node, tool)
 
+    # Holes the drill set cannot make go to milling: anything above the
+    # largest drill in the library, unless told otherwise.
+    for node in doc.nodes.values():
+        if node.op == "drill_holes":
+            node.params["split_large"] = True
+            node.params["mill_threshold"] = args.mill_above
+        elif node.op == "mill_holes":
+            node.params["mill_threshold"] = args.mill_above
+
     # The GUI does this once the geometry has evaluated: a CNC job takes its
     # cutter, and with it its feeds and depth, from the node feeding it.
     for node in doc.nodes.values():
@@ -81,6 +90,32 @@ def choose_tools(doc, args):
         tool = toollib.get(str(source.params.get("tool", ""))) if source else None
         if tool is not None:
             ops.sync_tool_params(node, tool)
+        if source is None:
+            continue
+
+        # Numbers given on the command line win over the library. The tool's
+        # own depth and feeds are laid over the job's fields at export time, so
+        # the only way to make a given number stick is to stop taking them from
+        # the tool -- sync_tool_params has already copied whatever the tool
+        # had into the job's fields, so nothing measured is lost.
+        given = {}
+        if source.op == "isolate":
+            given = {"feed_xy": args.isolation_feed, "feed_z": args.isolation_plunge,
+                     "cut_z": -args.isolation_depth if args.isolation_depth else None}
+            if args.isolation_depth:
+                source.params["cut_depth"] = args.isolation_depth
+        elif source.op == "cutout":
+            given = {"feed_xy": args.cutout_feed, "feed_z": args.cutout_plunge,
+                     "depth_per_pass": args.cutout_step}
+        if source.op in THROUGH and args.through_depth:
+            given["cut_z"] = -args.through_depth
+            given["multidepth"] = True
+        given = {k: v for k, v in given.items() if v is not None}
+        if given:
+            node.params.update(given)
+            if given.get("depth_per_pass"):
+                node.params["multidepth"] = True
+            node.params["feeds_from_tool"] = False
 
     # Shorts the isolation cutter cannot clear, found before anything is cut.
     iso = next((n for n in doc.nodes.values() if n.op == "isolate"), None)
@@ -91,6 +126,47 @@ def choose_tools(doc, args):
                 tip_dia=tool.tip_diameter or 0.02, tip_angle=tool.tip_angle or 30.0,
                 cut_depth=iso.params.get("cut_depth", 0.1))
     doc.invalidate()
+
+
+THROUGH = ("drill_holes", "mill_holes", "cutout", "mill_slots")
+
+
+def missing_feeds(doc, job) -> str | None:
+    """Why this job would run on placeholder numbers, or None if it will not.
+
+    Isolation and cutout take their feeds from the tool. A tool with none
+    recorded leaves the job's defaults in charge -- 150 to 200 mm/min, chosen
+    for nothing in particular -- which is how a fine cutter gets broken.
+    """
+    if not job.params.get("feeds_from_tool", True) or not job.inputs:
+        return None
+    source = doc.nodes.get(job.inputs[0])
+    if source is None or source.op not in ("isolate", "cutout"):
+        return None
+    tool = toollib.get(str(source.params.get("tool", "")))
+    if tool is None or tool.has_feeds:
+        return None
+    flag = "isolation" if source.op == "isolate" else "cutout"
+    extra = f" --{flag}-depth" if flag == "isolation" else f" --{flag}-step"
+    return (f"{tool.id} has no measured feeds, so this job would run on placeholder "
+            f"numbers. Pass --{flag}-feed --{flag}-plunge{extra}.")
+
+
+def unmatched_drills(doc, job):
+    """Hole sizes in a drill job that no drill in the library has."""
+    source = doc.nodes.get(job.inputs[0]) if job.inputs else None
+    if source is None or source.op != "drill_holes":
+        return []
+    drills = sorted(t.diameter for t in toollib.library().tools if t.kind == "drill")
+    counts = {}
+    for _x, _y, dia in doc.evaluate(source.id).data:
+        counts[round(dia, 3)] = counts.get(round(dia, 3), 0) + 1
+    out = []
+    for dia, n in sorted(counts.items()):
+        if not any(abs(d - dia) <= 0.001 for d in drills):
+            nearest = min(drills, key=lambda d: abs(d - dia)) if drills else None
+            out.append((dia, n, nearest))
+    return out
 
 
 WORD = re.compile(r"([XYZF])(-?\d+(?:\.\d+)?)")
@@ -131,9 +207,29 @@ def main(argv=None):
     parser.add_argument("--thickness", type=float, default=1.6,
                         help="board thickness in mm; drilling, hole milling and the "
                              "cutout must reach at least this deep")
+    parser.add_argument("--through-depth", type=float, default=None,
+                        help="cut drilling, hole milling and the cutout to this depth "
+                             "in mm instead of each tool's measured depth, e.g. 2.0 for "
+                             "a 1.7 mm board on a spoil board")
+    parser.add_argument("--mill-above", type=float, default=None,
+                        help="mill holes larger than this (mm) instead of drilling them; "
+                             "default: just above the largest drill in the library")
+    for flag, what in (("isolation", "isolation"), ("cutout", "cutout")):
+        parser.add_argument(f"--{flag}-feed", type=float, default=None,
+                            help=f"{what} XY feed, mm/min, instead of the tool's")
+        parser.add_argument(f"--{flag}-plunge", type=float, default=None,
+                            help=f"{what} Z feed, mm/min, instead of the tool's")
+    parser.add_argument("--isolation-depth", type=float, default=None,
+                        help="isolation depth in mm (positive), instead of the tool's")
+    parser.add_argument("--cutout-step", type=float, default=None,
+                        help="cutout depth per pass in mm, instead of the tool's")
     parser.add_argument("--kicad-cli", default=None)
     parser.add_argument("--replot", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.mill_above is None:
+        drills = [t.diameter for t in toollib.library().tools if t.kind == "drill"]
+        args.mill_above = round(max(drills, default=2.0) + 0.05, 3)
 
     doc, notes = build(args)
     for note in notes:
@@ -173,16 +269,26 @@ def main(argv=None):
             fh.write(result.data)
         low_z, top_feed, (x0, x1, y0, y1) = survey(result.data)
         source = doc.nodes.get(node.inputs[0]) if node.inputs else None
-        through = source is not None and source.op in ("drill_holes", "mill_holes",
-                                                       "cutout", "mill_slots")
-        tool = result.meta.get("tool") or (
-            "tool per hole size" if source is not None and source.op == "drill_holes"
-            else "no library tool")
+        through = source is not None and source.op in THROUGH
+        own = node.params.get("feeds_from_tool", True)
+        if source is not None and source.op == "drill_holes":
+            tool = "drill per hole size" + ("" if own else ", job feeds")
+        else:
+            tool = (str(source.params.get("tool", "")) if source else "") or "no library tool"
+            tool += "" if own else ", given feeds"
         print(f"{out}\n  {node.name}: {tool}, {result.meta.get('lines', 0)} lines, "
               f"~{result.meta.get('minutes', 0):.0f} min, lowest Z {low_z:.3f}, "
               f"top feed {top_feed:.0f}, X {x0:.2f}..{x1:.2f} Y {y0:.2f}..{y1:.2f}")
         for warning in result.meta.get("warnings", []):
             print(f"  warning: {warning}")
+        reason = missing_feeds(doc, node)
+        if reason and low_z < 0:
+            print(f"  PROBLEM: {reason}")
+            problems += 1
+        for dia, count, nearest in unmatched_drills(doc, node):
+            fit = f"nearest is {nearest:g} mm" if nearest else "no drills in the library"
+            print(f"  warning: {count} hole(s) of {dia:g} mm have no drill of that size "
+                  f"in the library ({fit}); the file asks for a {dia:g} mm drill")
         if through and -args.thickness < low_z < 0:
             # The tool's measured cut_z wins over the job's own field, so a
             # depth proven on a thinner board would quietly stop short here.

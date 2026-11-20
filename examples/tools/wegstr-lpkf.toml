@@ -349,6 +349,24 @@ vendor = "Wegstr"
 part_number = ""
 
 [[tool]]
+id = "router-0.6"
+name = "Spiral router 0.6"
+kind = "router"
+diameter = 0.6
+flutes = 2
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = "No feeds measured yet. Check the flute length covers the full cut depth before routing thick boards."
+source = ""
+vendor = ""
+part_number = ""
+
+[[tool]]
 id = "wegstr-vbit-30"
 name = "Wegstr 30 deg spiral carbide engraving bit"
 kind = "vbit"

@@ -72,9 +72,14 @@ machine:
 | cutout | `router-1.0` | Wegstr 1.0 mm spiral-patterned router | 60 / 60 | −1.6 in 0.75 passes |
 
 Only the 0.7 mm drill has measured feeds. Every other drill size runs on the
-job's own fields, 60 mm/min plunge to −1.8 mm in 0.6 mm pecks. The V-bits and
-the LPKF micro and universal cutters have assumed tip sizes, so do not choose
-them unless the person asks.
+job's own fields, 60 mm/min plunge to −1.8 mm in 0.6 mm pecks. Holes larger
+than the largest drill (1.1 mm) are milled rather than drilled, so no file
+asks for a drill that is not in the set.
+
+`lpkf-rf-0.25` and `router-0.6` exist but have no measured feeds. The script
+refuses to use them until feeds are given on the command line (see the Rogers
+example below). The V-bits and the LPKF micro and universal cutters have
+assumed tip sizes, so do not choose them unless the person asks.
 
 ### 3. Generate
 
@@ -88,6 +93,10 @@ python examples/wegstr_job.py <board.kicad_pcb> -o <board folder>/gcode
 | `--thickness` | `1.6` | board thickness in mm; drilling, hole milling and the cutout must reach it |
 | `--passes` | `2` | isolation passes; more passes widen the gap around each track |
 | `--tabs 0\|2\|4\|8` | `4` | holding tabs on the cutout |
+| `--through-depth` | each tool's own | cut drilling, hole milling and the cutout to this depth (mm) instead |
+| `--mill-above` | just above the largest drill (1.15) | holes larger than this are milled, not drilled |
+| `--isolation-feed`, `--isolation-plunge`, `--isolation-depth` | the tool's | XY feed, Z feed (mm/min) and depth (mm, positive) for isolation |
+| `--cutout-feed`, `--cutout-plunge`, `--cutout-step` | the tool's | XY feed, Z feed (mm/min) and depth per pass (mm) for the cutout |
 | `--isolation-tool`, `--cutout-tool`, `--hole-mill-tool` | as in the table | other library ids |
 | `--kicad-cli` | found automatically | path to `kicad-cli` if it is not found |
 | `--replot` | off | re-plot even if the existing plot looks current |
@@ -125,8 +134,10 @@ What each finding means, and what to do:
 |---|---|---|
 | `clearance: N short(s)` with `short near X.. Y..` | the 0.15 mm cutter cannot get between two separate pieces of copper there, so they stay connected | stop. Give the person the coordinates (they are machine coordinates, measured from the outline's bottom-left corner). The fix is more clearance in KiCad. Rounded corners are harmless |
 | `PROBLEM: spans .. more than the Wegstr's 140 x 200 mm travel` | the job does not fit the machine | stop. If the X and Y spans swapped would fit 140 × 200, suggest rotating the board 90° in KiCad; otherwise it cannot be cut in one setup |
-| `PROBLEM: deepest cut is Z.. which does not get through a .. mm board` | the depth measured for that tool is shallower than this board | stop and ask. Use `--thickness` only if the person confirms the board really is thinner |
+| `PROBLEM: deepest cut is Z.. which does not get through a .. mm board` | the depth measured for that tool is shallower than this board | stop and ask. With the person's agreement, pass `--through-depth` a little deeper than the board and make sure there is a sacrificial plate under it. Lower `--thickness` only if the board really is thinner |
 | `note: reaches X-1.00 Y-1.00` | the outside cutout runs a tool radius plus margin beyond the edge | pass it on: zero the machine with that much room to the left and in front |
+| `PROBLEM: <tool> has no measured feeds` | isolation or cutout would run on placeholder numbers | stop and ask for feeds, or use the numbers in the Rogers example if the person agrees |
+| `warning: N hole(s) of X mm have no drill of that size` | KiCad asked for a size the set does not have, e.g. 1.02 | pass it on with the nearest drill named; the operator fits that one at the pause |
 | `warning: Tool .. has no feeds recorded yet` | that job used its own feed fields | pass it on |
 | an empty job (`lowest Z 0.000`) | nothing to do, e.g. no holes of 2 mm or more | say it can be skipped |
 
@@ -143,8 +154,10 @@ Report the files in the order they should run, with the cutter for each:
 2. **Drilling**: one file, smallest drill first. Start with the drill named
    in the comments at the top. At each `T<n> M06` + `M00` pause, fit the drill
    named in the two comment lines just above it.
-3. **Hole milling**, if not empty: LPKF end mill 1.0 mm.
-4. **Cutout, last**: 1.0 mm router. The tabs hold the board in place.
+3. **Hole milling**, if not empty: LPKF end mill 1.0 mm, for every hole above
+   1.1 mm.
+4. **Cutout, last**: the router named in the file's header. The tabs hold the
+   board in place.
 
 Notes for the operator, to include word for word:
 
@@ -154,6 +167,43 @@ Notes for the operator, to include word for word:
   the machine compensates for the surface itself.
 - Set the spindle to 11000 rpm by hand. The controller ignores the `S` word.
 - Run the first job of a new setup on scrap and watch it.
+- If the cut goes deeper than the board, as in the Rogers example below, the
+  board must sit on a sacrificial plate. The tools go that far into whatever is
+  under it.
+
+### Example: 1.7 mm Rogers, cut and drilled to 2 mm
+
+Isolation with the 0.15 mm RF mill, all holes and the cutout to 2.0 mm, cutout
+with the 0.6 mm spiral router:
+
+```
+python examples/wegstr_job.py <board.kicad_pcb> -o <board folder>/gcode ^
+    --thickness 1.7 --through-depth 2.0 ^
+    --cutout-tool router-0.6 --cutout-feed 50 --cutout-plunge 20 --cutout-step 0.25
+```
+
+(`^` continues a line in cmd. Use a backtick in PowerShell, or `\` in bash.)
+
+For the 0.25 mm RF mill instead, add
+`--isolation-tool lpkf-rf-0.25 --isolation-feed 120 --isolation-plunge 60 --isolation-depth 0.06`.
+Those are the 0.15 mm mill's measured numbers, used as a starting point.
+
+What this does and why:
+
+- **Depth.** Drilling, hole milling and the cutout go to −2.0 mm: through
+  1.7 mm and 0.3 mm into the plate below. Drills peck at 0.6 mm and the hole
+  mill steps 0.3 mm. Given depths take over from the tools' measured ones,
+  which were set for thinner stock.
+- **0.6 mm router.** 50 mm/min XY, 20 mm/min plunge and 0.25 mm per pass are
+  conservative starting values, not measured ones. Eight passes to 2.0 mm make
+  the cutout slow; that is expected. **Check the router's flute length is at
+  least 2.0 mm.** A shorter flute rubs the shank in the slot and snaps the
+  tool.
+- **Rogers.** Ceramic-filled laminates (RO4000) are abrasive and wear cutters
+  faster than FR4. PTFE laminates (RT/duroid) are soft and leave burrs. Either
+  way, watch the first cutout and slow down if the router labours.
+
+Report all of this to the person as starting values to try on scrap first.
 
 ### Two-sided boards
 
