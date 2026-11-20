@@ -247,6 +247,14 @@ overrides). It is shared by every project, because the same cutters get used
 across boards. **Tools → Edit tool library** opens it, **Reload tool library**
 (Ctrl+Shift+T) picks up your changes.
 
+`examples/tools/wegstr-lpkf.toml` is a complete library for a real Wegstr with
+LPKF and Wegstr cutters, with part numbers for reordering. Point
+`AALTOCAM_TOOLS` at it to try it without touching your own. With it,
+`examples/wegstr_job.py` takes a board to checked Wegstr G-code in one command,
+with a library tool chosen for every job. [docs/wegstr-claude-code.md](docs/wegstr-claude-code.md)
+explains that workflow to a coding agent, so it can do the whole run and hand the
+operator the files.
+
 Choosing a tool fills in the fields it governs -- diameter, shape, and on a CNC
 job the feeds and depth -- and greys them out, so what you read is what will be
 cut. A CNC job that inherits its tool from the geometry above it picks the
