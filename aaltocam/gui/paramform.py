@@ -10,6 +10,8 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QAbstractSpinBox,
+    QApplication,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -409,6 +411,32 @@ class ParamForm(QScrollArea):
         if path:
             edit.setText(path)
             self._emit(name, path)
+
+    def commit_pending_edits(self):
+        """Hand on whatever has been typed but not yet entered.
+
+        Spin boxes have keyboard tracking off, so a typed number only counts
+        once Enter is pressed or the box loses focus, and text fields wait for
+        the same. A shortcut such as Ctrl+E is neither: without this, the job
+        is exported with the number that was there before the one on screen.
+
+        Focus is left where it is. Taking it away would commit the edit too,
+        but would also leave the cursor somewhere the user did not put it.
+        """
+        for spin in self.findChildren(QAbstractSpinBox):
+            try:
+                spin.interpretText()
+            except RuntimeError:
+                # Committing one value can rebuild the form, which deletes the
+                # widgets still waiting in this list. They were showing the
+                # stored values anyway, so there is nothing of theirs to keep.
+                continue
+        focused = QApplication.focusWidget()
+        if (isinstance(focused, QLineEdit) and focused.isModified()
+                and self.isAncestorOf(focused)
+                and not isinstance(focused.parent(), QAbstractSpinBox)):
+            focused.setModified(False)
+            focused.editingFinished.emit()
 
     # -- signals -----------------------------------------------------------
 
