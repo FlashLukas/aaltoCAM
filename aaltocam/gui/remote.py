@@ -170,9 +170,13 @@ class Commands:
         return {"ok": True, "node": _node_state(self.window, node_id)}
 
     def do_gcode(self, command):
-        """The text of a CNC job, to read before anyone cuts it."""
+        """The text of a CNC job, to read before anyone cuts it.
+
+        Evaluated first if an edit made in the window has not landed yet, so
+        what is read is what `export` would write.
+        """
         node_id = self._require(command, "id")
-        result = self.window.results.get(node_id)
+        result = self.window.current_result(node_id, commit_edits=False)
         if not hasattr(result, "kind") or result.kind != "gcode":
             return {"ok": False, "error": f"{node_id} has not produced G-code"}
         return {"ok": True, "gcode": result.data,
@@ -258,7 +262,9 @@ class Commands:
     def do_export(self, command):
         node_id = self._require(command, "id")
         path = self._require(command, "path")
-        result = self.window.results.get(node_id)
+        # Not `results` as it stands: an edit made in the window may still be
+        # waiting for its worker, and the file would be cut at the old values.
+        result = self.window.current_result(node_id, commit_edits=False)
         if not hasattr(result, "kind") or result.kind != "gcode":
             return {"ok": False, "error": f"{node_id} has not produced G-code"}
         with open(path, "w", encoding="utf-8") as fh:

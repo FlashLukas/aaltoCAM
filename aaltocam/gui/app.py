@@ -51,6 +51,17 @@ from .paramform import ParamForm
 
 RECOMPUTE_DELAY_MS = 180
 
+
+def _is_gcode(result) -> bool:
+    return getattr(result, "kind", None) == "gcode" and isinstance(result.data, str)
+
+
+def _not_clean(result) -> str:
+    """Why a job cannot be exported, in words the warning box can show."""
+    if isinstance(result, Exception):
+        return f"This job does not evaluate: {result}"
+    return "This job has not evaluated cleanly."
+
 #: Clearance left between a layer placed aside and everything already on the
 #: bed. Small enough to keep both sides on screen at a working zoom, large
 #: enough that the two never look like one board.
@@ -767,13 +778,24 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self, "Export G-code", "Select a CNC job first.")
             return
-        result = self.results.get(node.id)
-        if not hasattr(result, "data"):
-            QMessageBox.warning(self, "Export G-code", "This job has not evaluated cleanly.")
+        node_id = node.id
+        # Asked before the dialog so a broken job is refused before anyone
+        # picks a file name for it.
+        result = self.current_result(node_id)
+        if not _is_gcode(result):
+            QMessageBox.warning(self, "Export G-code", _not_clean(result))
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export G-code", f"{node.id}.nc", "G-code (*.nc *.gcode *.ngc);;All files (*)")
+            self, "Export G-code", f"{node_id}.nc", "G-code (*.nc *.gcode *.ngc);;All files (*)")
         if not path:
+            return
+        # And asked again after it. The dialog runs its own event loop, so the
+        # debounce timer, a worker finishing and the control channel all keep
+        # going while it is up, and any of them can change the job. What is
+        # written is the job as it stands when the file is written.
+        result = self.current_result(node_id, commit_edits=False)
+        if not _is_gcode(result):
+            QMessageBox.warning(self, "Export G-code", _not_clean(result))
             return
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(result.data)
@@ -1355,6 +1377,37 @@ class MainWindow(QMainWindow):
         finally:
             QApplication.restoreOverrideCursor()
         self._apply_results((time.perf_counter() - start) * 1000)
+
+    def current_result(self, node_id: str, commit_edits: bool = True):
+        """The result of node_id for the document as it stands right now.
+
+        `results` is what the last evaluation that finished produced, and
+        since evaluation moved to a worker that is often not the same thing:
+        an edit waits out the debounce, then the worker takes as long as the
+        board takes, and until it lands the previous answer is still there.
+        Fine for drawing, wrong for anything that leaves the program -- an
+        exported job cut at the old depth is a well-formed file for a board
+        nobody asked for.
+
+        So check the result against the document's content hash and evaluate
+        synchronously only if it is out of date. Exporting a job that is
+        already current costs nothing; one that is not costs one evaluation,
+        which is the price of the file being right. The synchronous run also
+        supersedes any worker still in flight, so an older answer cannot land
+        on top of this one afterwards.
+
+        `commit_edits` first hands on anything typed in the panel but not yet
+        entered. The control channel passes False: a script should not commit
+        a number someone is halfway through typing.
+        """
+        if commit_edits:
+            self.form.commit_pending_edits()
+        current = (node_id in self.doc.nodes
+                   and self.doc.is_cached(node_id)
+                   and self.results.get(node_id) is self.doc._cache.get(node_id))
+        if not current:
+            self.recompute()
+        return self.results.get(node_id)
 
     # -- evaluating without freezing the window ----------------------------
 
