@@ -350,7 +350,7 @@ part_number = ""
 
 [[tool]]
 id = "router-0.6"
-name = "Spiral router 0.6"
+name = "Wegstr spiral router 0.6"
 kind = "router"
 diameter = 0.6
 flutes = 2
@@ -363,7 +363,7 @@ depth_per_pass = 0.0
 spindle_rpm = 11000
 notes = "No feeds measured yet. Check the flute length covers the full cut depth before routing thick boards."
 source = ""
-vendor = ""
+vendor = "Wegstr"
 part_number = ""
 
 [[tool]]
