@@ -1,0 +1,619 @@
+# aaltocam example tool library -- Wegstr CNC with LPKF and Wegstr cutters
+#
+# The cutters one real Wegstr setup runs with. Point aaltoCAM at this file with
+#     AALTOCAM_TOOLS=<path to this file>
+# or copy it over tools.toml in your config directory (%APPDATA%\aaltocam on
+# Windows, ~/.config/aaltocam elsewhere).
+#
+# Five tools carry feeds measured on boards actually cut on that machine:
+# lpkf-rf-0.15 (isolation), lpkf-end-1.0 (hole milling), router-1.0 (cutout),
+# drill-0.7 (drilling) and, geometry only, wegstr-vbit-30. Everything else has
+# geometry and zero feeds, which means "not established yet": a CNC job then
+# uses its own feed fields and says so in a warning.
+#
+# feed_xy, feed_z   mm/min. Zero means not established yet.
+# cut_z             mm, negative. depth_per_pass mm, positive, 0 = single pass.
+# spindle_rpm       advisory. A Wegstr ignores S entirely and is set by hand;
+#                   this is written as a comment at the tool change and used for
+#                   the chip-load figure. 11000 rpm is what that machine runs.
+# flutes            assumed unless checked. Chip load scales inversely with it.
+# kind              mill | endmill | router | drill | vbit
+# vendor, part_number
+#                   for reordering; aaltoCAM ignores keys it does not know.
+#
+# Order matters: when two tools share a diameter, the diameter lookup used by
+# drilling and rest machining picks the LAST one, so the drills stay at the end.
+
+[[tool]]
+id = "lpkf-micro-0.1"
+name = "LPKF Micro Cutter 0.1"
+kind = "vbit"
+diameter = 0.1
+flutes = 1
+tip_angle = 0.0
+tip_diameter = 0.1
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = "Tip width assumed from the product name; measure a test groove and correct tip_diameter. tip_angle 0 = unknown, aaltoCAM then assumes 30 deg."
+source = ""
+vendor = "LPKF"
+part_number = "115836"
+
+[[tool]]
+id = "lpkf-rf-0.15"
+name = "LPKF RF end mill 0.15"
+kind = "mill"
+diameter = 0.15
+flutes = 2
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 120
+feed_z = 60
+cut_z = -0.06
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = ""
+source = "measured: 10x10SampleChipHolderIP isolation"
+vendor = "LPKF"
+part_number = "115832"
+
+[[tool]]
+id = "lpkf-universal-0.2"
+name = "LPKF Universal Cutter 0.2"
+kind = "vbit"
+diameter = 0.2
+flutes = 1
+tip_angle = 0.0
+tip_diameter = 0.2
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = "Tip width assumed from the product name; measure a test groove and correct tip_diameter. tip_angle 0 = unknown, aaltoCAM then assumes 30 deg."
+source = ""
+vendor = "LPKF"
+part_number = "115835"
+
+[[tool]]
+id = "lpkf-rf-0.25"
+name = "LPKF RF end mill 0.25"
+kind = "mill"
+diameter = 0.25
+flutes = 2
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = ""
+source = ""
+vendor = "LPKF"
+part_number = "115833"
+
+[[tool]]
+id = "lpkf-end-0.8"
+name = "LPKF end mill 0.8"
+kind = "endmill"
+diameter = 0.8
+flutes = 2
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = ""
+source = ""
+vendor = "LPKF"
+part_number = "115839"
+
+[[tool]]
+id = "lpkf-end-1.0"
+name = "LPKF end mill 1.0"
+kind = "endmill"
+diameter = 1.0
+flutes = 2
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 60
+feed_z = 60
+cut_z = -1.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = ""
+source = "measured: 10x10SampleChipHolderIP hole milling"
+vendor = "LPKF"
+part_number = "115840"
+
+[[tool]]
+id = "wegstr-end-0.3"
+name = "Wegstr 2-flute end mill 0.3"
+kind = "endmill"
+diameter = 0.3
+flutes = 2
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = ""
+source = ""
+vendor = "Wegstr"
+part_number = ""
+
+[[tool]]
+id = "wegstr-end-0.6"
+name = "Wegstr 2-flute end mill 0.6"
+kind = "endmill"
+diameter = 0.6
+flutes = 2
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = ""
+source = ""
+vendor = "Wegstr"
+part_number = ""
+
+[[tool]]
+id = "wegstr-end-0.8"
+name = "Wegstr 2-flute end mill 0.8"
+kind = "endmill"
+diameter = 0.8
+flutes = 2
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = ""
+source = ""
+vendor = "Wegstr"
+part_number = ""
+
+[[tool]]
+id = "wegstr-end-1.0"
+name = "Wegstr 2-flute end mill 1.0"
+kind = "endmill"
+diameter = 1.0
+flutes = 2
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = ""
+source = ""
+vendor = "Wegstr"
+part_number = ""
+
+[[tool]]
+id = "wegstr-end-2.0"
+name = "Wegstr 2-flute end mill 2.0"
+kind = "endmill"
+diameter = 2.0
+flutes = 2
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = ""
+source = ""
+vendor = "Wegstr"
+part_number = ""
+
+[[tool]]
+id = "wegstr-1f-1.5"
+name = "Wegstr 1-flute end mill 1.5"
+kind = "endmill"
+diameter = 1.5
+flutes = 1
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = ""
+source = ""
+vendor = "Wegstr"
+part_number = ""
+
+[[tool]]
+id = "wegstr-1f-2.0"
+name = "Wegstr 1-flute end mill 2.0"
+kind = "endmill"
+diameter = 2.0
+flutes = 1
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = ""
+source = ""
+vendor = "Wegstr"
+part_number = ""
+
+[[tool]]
+id = "wegstr-dlc-1.0"
+name = "Wegstr 1-flute DLC end mill 1.0 x L4"
+kind = "endmill"
+diameter = 1.0
+flutes = 1
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = ""
+source = ""
+vendor = "Wegstr"
+part_number = ""
+
+[[tool]]
+id = "wegstr-dlc-2.0-l6"
+name = "Wegstr 1-flute DLC end mill 2.0 x L6"
+kind = "endmill"
+diameter = 2.0
+flutes = 1
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = ""
+source = ""
+vendor = "Wegstr"
+part_number = ""
+
+[[tool]]
+id = "wegstr-dlc-2.0-l12"
+name = "Wegstr 1-flute DLC end mill 2.0 x L12"
+kind = "endmill"
+diameter = 2.0
+flutes = 1
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = ""
+source = ""
+vendor = "Wegstr"
+part_number = ""
+
+[[tool]]
+id = "wegstr-dlc-3.175-l17"
+name = "Wegstr 1-flute DLC end mill 3.175 x L17"
+kind = "endmill"
+diameter = 3.175
+flutes = 1
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = ""
+source = ""
+vendor = "Wegstr"
+part_number = ""
+
+[[tool]]
+id = "router-1.0"
+name = "Wegstr 2-flute spiral-patterned end mill 1.0"
+kind = "router"
+diameter = 1.0
+flutes = 2
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 60
+feed_z = 60
+cut_z = -1.6
+depth_per_pass = 0.75
+spindle_rpm = 11000
+notes = "Assumed to be the 'Spiral router 1.0' the cutout feeds were measured with."
+source = "measured: 10x10SampleChipHolderIP cutout"
+vendor = "Wegstr"
+part_number = ""
+
+[[tool]]
+id = "wegstr-vbit-30"
+name = "Wegstr 30 deg spiral carbide engraving bit"
+kind = "vbit"
+diameter = 0.5
+flutes = 1
+tip_angle = 30.0
+tip_diameter = 0.1
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = "tip_diameter 0.1 is assumed, not measured: measure the tip or a test groove and correct it. diameter = max usable width (same convention as wegstr-vbit-30), not measured."
+source = ""
+vendor = "Wegstr"
+part_number = ""
+
+[[tool]]
+id = "wegstr-vbit-30-flat"
+name = "Wegstr 30 deg spiral engraving bit (flat tip)"
+kind = "vbit"
+diameter = 0.5
+flutes = 1
+tip_angle = 30.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = "Flat-tip width unknown: measure it and set tip_diameter. diameter = max usable width (same convention as wegstr-vbit-30), not measured."
+source = ""
+vendor = "Wegstr"
+part_number = ""
+
+[[tool]]
+id = "wegstr-vbit-45"
+name = "Wegstr 45 deg spiral carbide engraving bit"
+kind = "vbit"
+diameter = 0.5
+flutes = 1
+tip_angle = 45.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = "Tip width unknown: measure it and set tip_diameter. diameter = max usable width (same convention as wegstr-vbit-30), not measured."
+source = ""
+vendor = "Wegstr"
+part_number = ""
+
+[[tool]]
+id = "lpkf-drill-0.6"
+name = "LPKF spiral drill 0.6"
+kind = "drill"
+diameter = 0.6
+flutes = 2
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = ""
+source = ""
+vendor = "LPKF"
+part_number = "115850"
+
+[[tool]]
+id = "lpkf-drill-0.7"
+name = "LPKF spiral drill 0.7"
+kind = "drill"
+diameter = 0.7
+flutes = 2
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = ""
+source = ""
+vendor = "LPKF"
+part_number = "115851"
+
+[[tool]]
+id = "drill-0.2"
+name = "Wegstr TiN drill 0.2"
+kind = "drill"
+diameter = 0.2
+flutes = 2
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = "Wegstr TiN drill set 0.2-1.1 mm."
+source = ""
+vendor = "Wegstr"
+part_number = ""
+
+[[tool]]
+id = "drill-0.3"
+name = "Wegstr TiN drill 0.3"
+kind = "drill"
+diameter = 0.3
+flutes = 2
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = "Wegstr TiN drill set 0.2-1.1 mm."
+source = ""
+vendor = "Wegstr"
+part_number = ""
+
+[[tool]]
+id = "drill-0.4"
+name = "Wegstr TiN drill 0.4"
+kind = "drill"
+diameter = 0.4
+flutes = 2
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = "Wegstr TiN drill set 0.2-1.1 mm."
+source = ""
+vendor = "Wegstr"
+part_number = ""
+
+[[tool]]
+id = "drill-0.5"
+name = "Wegstr TiN drill 0.5"
+kind = "drill"
+diameter = 0.5
+flutes = 2
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = "Wegstr TiN drill set 0.2-1.1 mm."
+source = ""
+vendor = "Wegstr"
+part_number = ""
+
+[[tool]]
+id = "drill-0.6"
+name = "Wegstr TiN drill 0.6"
+kind = "drill"
+diameter = 0.6
+flutes = 2
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = "Wegstr TiN drill set 0.2-1.1 mm."
+source = ""
+vendor = "Wegstr"
+part_number = ""
+
+[[tool]]
+id = "drill-0.7"
+name = "Wegstr TiN drill 0.7"
+kind = "drill"
+diameter = 0.7
+flutes = 2
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 60
+feed_z = 100
+cut_z = -1.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = "Measured feeds are from this Wegstr set drill. Wegstr TiN drill set 0.2-1.1 mm."
+source = "measured: 10x10SampleChipHolderIP drilling"
+vendor = "Wegstr"
+part_number = ""
+
+[[tool]]
+id = "drill-0.8"
+name = "Wegstr TiN drill 0.8"
+kind = "drill"
+diameter = 0.8
+flutes = 2
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = "Wegstr TiN drill set 0.2-1.1 mm."
+source = ""
+vendor = "Wegstr"
+part_number = ""
+
+[[tool]]
+id = "drill-0.9"
+name = "Wegstr TiN drill 0.9"
+kind = "drill"
+diameter = 0.9
+flutes = 2
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = "Wegstr TiN drill set 0.2-1.1 mm."
+source = ""
+vendor = "Wegstr"
+part_number = ""
+
+[[tool]]
+id = "drill-1.0"
+name = "Wegstr TiN drill 1.0"
+kind = "drill"
+diameter = 1.0
+flutes = 2
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = "Wegstr TiN drill set 0.2-1.1 mm."
+source = ""
+vendor = "Wegstr"
+part_number = ""
+
+[[tool]]
+id = "drill-1.1"
+name = "Wegstr TiN drill 1.1"
+kind = "drill"
+diameter = 1.1
+flutes = 2
+tip_angle = 0.0
+tip_diameter = 0.0
+feed_xy = 0.0
+feed_z = 0.0
+cut_z = 0.0
+depth_per_pass = 0.0
+spindle_rpm = 11000
+notes = "Wegstr TiN drill set 0.2-1.1 mm."
+source = ""
+vendor = "Wegstr"
+part_number = ""
