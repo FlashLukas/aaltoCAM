@@ -368,19 +368,19 @@ part_number = ""
 
 [[tool]]
 id = "wegstr-vbit-30"
-name = "Wegstr 30 deg spiral carbide engraving bit"
+name = "Wegstr spiral engraving bit sold as 30 deg (measured 45 deg)"
 kind = "vbit"
 diameter = 0.5
 flutes = 1
-tip_angle = 30.0
-tip_diameter = 0.1
+tip_angle = 45.0
+tip_diameter = 0.081
 feed_xy = 0.0
 feed_z = 0.0
 cut_z = 0.0
 depth_per_pass = 0.0
 spindle_rpm = 11000
-notes = "tip_diameter 0.1 is assumed, not measured: measure the tip or a test groove and correct it. diameter = max usable width (same convention as wegstr-vbit-30), not measured."
-source = ""
+notes = "Sold as 30 deg; a depth-ladder test on the iXM board measured 45 deg. Measured cut width w = 0.11 + 0.83*(d - 0.035) mm for depth d: copper breaks through at -0.02 to -0.04 mm, -0.08 mm gives a 0.149 mm floor. tip_diameter 0.081 is that fit at Z0 (0.11 - 0.83*0.035), so aaltoCAM's width model tip + 2*d*tan(22.5 deg) reproduces the measurement. diameter = max usable width, not measured. No feeds measured yet."
+source = "measured: iXM shield depth ladder (V-bit isolation)"
 vendor = "Wegstr"
 part_number = ""
 
